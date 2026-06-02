@@ -26,6 +26,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from PIL import Image, ImageOps
+
 log = logging.getLogger("markbase.ingest")
 
 # --------------------------------------------------------------------------- #
@@ -183,6 +185,39 @@ def run_markitdown(source: str) -> str:
     if not proc.stdout.strip():
         raise RuntimeError("markitdown produced no output")
     return proc.stdout
+
+
+def _image_extensions() -> set[str]:
+    return {"jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff", "heic", "heif"}
+
+
+def _preprocess_for_ocr(source: str) -> str:
+    img = Image.open(source)
+    img = ImageOps.exif_transpose(img)
+    gray = ImageOps.grayscale(img)
+    if max(gray.size) < 1800:
+        scale = 1800 / max(gray.size)
+        gray = gray.resize((int(gray.size[0] * scale), int(gray.size[1] * scale)))
+    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+        gray.save(tmp.name, format='PNG')
+        return tmp.name
+
+
+def run_tesseract_ocr(source: str) -> str:
+    """Run Tesseract OCR on an image and return extracted text."""
+    prepared = _preprocess_for_ocr(source)
+    try:
+        proc = _run(['tesseract', prepared, 'stdout', '--psm', '3'])
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"tesseract failed (exit {proc.returncode}): {proc.stderr.strip() or proc.stdout.strip()}"
+            )
+        text = proc.stdout.strip()
+        if not text:
+            raise RuntimeError('tesseract produced no OCR text')
+        return text
+    finally:
+        Path(prepared).unlink(missing_ok=True)
 
 
 def ytdlp_json(url: str, extra: Iterable[str] = ()) -> str:
@@ -652,18 +687,33 @@ def ingest_file(filepath: str, original_name: str | None = None, source_url: str
     item_dir = docs_dir() / slug
     item_dir.mkdir(parents=True, exist_ok=True)
 
-    content = run_markitdown(source)
-    atomic_write_text(item_dir / "content.md", content)
-
     ext = Path(name).suffix.lower().lstrip(".")
     if source_url:
         source_type = "url"
     elif ext == "pdf":
         source_type = "pdf"
+    elif ext in _image_extensions():
+        source_type = "image"
     elif ext in {"doc", "docx", "odt", "rtf", "txt", "md"}:
         source_type = "doc"
     else:
         source_type = "doc"
+
+    if source_type == "image" and not source_url:
+        exif_md = run_markitdown(source)
+        ocr_text = run_tesseract_ocr(source)
+        content = (
+            f"# {title}\n\n"
+            "## OCR text\n\n"
+            f"{ocr_text.strip()}\n\n"
+            "---\n\n"
+            "## Image metadata\n\n"
+            f"{exif_md.strip()}\n"
+        )
+    else:
+        content = run_markitdown(source)
+
+    atomic_write_text(item_dir / "content.md", content)
 
     meta = new_metadata(
         id=slug,
