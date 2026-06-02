@@ -228,6 +228,11 @@ def api_queue() -> JSONResponse:
     return JSONResponse(queue_worker.queue_status())
 
 
+@app.post("/api/queue/clear-completed")
+def api_queue_clear_completed() -> JSONResponse:
+    return JSONResponse({"cleared": queue_worker.clear_completed_jobs()})
+
+
 # --------------------------------------------------------------------------- #
 # Notes ("Save to MarkBase") — synchronous, no conversion needed
 # --------------------------------------------------------------------------- #

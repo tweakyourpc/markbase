@@ -327,7 +327,10 @@
   </div>
 
   <div class="panel">
-    <h3>Job Queue</h3>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px">
+      <h3 style="margin:0">Job Queue</h3>
+      <button class="mini-btn" id="clear-completed-btn" onclick="clearCompletedJobs()">Clear completed</button>
+    </div>
     <div class="queue-list" id="queue-list"><div style="color:var(--text-dim);font-size:12px">No jobs yet.</div></div>
   </div>
 
@@ -376,7 +379,7 @@ async function loadLibrary() {
 
 function statusBadge(item) {
   const s = item.ai_status && item.ai_status !== "none" ? item.ai_status : item.status;
-  return `<span class="badge ${esc(item.status)}">${esc(item.status)}</span>`;
+  return `<span class="badge ${esc(s)}">${esc(s)}</span>`;
 }
 
 function matchesFilters(item) {
@@ -451,7 +454,6 @@ function group(label, id, children, depth = 0, collapsed = false) {
 function itemRow(item) {
   return `<div class="tree-item" data-path="${esc(item.path)}" onclick="openItem('${cssEsc(item.path)}')">
     <span class="title">${esc(item.title)}</span>
-    <span class="badge ${esc(item.status)}">${esc(item.status)}</span>
   </div>`;
 }
 
@@ -747,8 +749,10 @@ async function pollQueue() {
 }
 function renderQueue(jobs) {
   const list = $("#queue-list");
-  if (!jobs.length) { list.innerHTML = `<div style="color:var(--text-dim);font-size:12px">No jobs yet.</div>`; return; }
-  list.innerHTML = jobs.slice(0, 15).map(j => {
+  const visibleJobs = jobs.filter(j => j.status !== "done");
+  $("#clear-completed-btn").disabled = !jobs.some(j => j.status === "done");
+  if (!visibleJobs.length) { list.innerHTML = `<div style="color:var(--text-dim);font-size:12px">No active, queued, or failed jobs.</div>`; return; }
+  list.innerHTML = visibleJobs.slice(0, 15).map(j => {
     const label = j.original_name || j.payload || j.type;
     return `<div class="job">
       <div class="job-top">
@@ -758,6 +762,14 @@ function renderQueue(jobs) {
       ${j.error_message ? `<div class="err">${esc(j.error_message)}</div>` : ""}
     </div>`;
   }).join("");
+}
+
+async function clearCompletedJobs() {
+  try {
+    await fetch("/api/queue/clear-completed", { method: "POST" });
+    lastDoneCount = 0;
+    pollQueue();
+  } catch (e) {}
 }
 function trim(s, n){ s=String(s); return s.length>n ? s.slice(0,n)+"…" : s; }
 
