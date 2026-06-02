@@ -348,6 +348,9 @@
 const state = {
   index: { items: [] },
   current: null,        // currently viewed item path
+  currentMarkdown: "",
+  currentMeta: null,
+  isEditing: false,
   searchTerm: "",
   activeTags: new Set(),
   serverResults: null,  // full-text search results (paths) or null
@@ -482,6 +485,9 @@ async function openItem(path) {
     const r = await fetch("/api/item/" + path.split("/").map(encodeURIComponent).join("/"));
     if (!r.ok) throw new Error("not found");
     const data = await r.json();
+    state.currentMarkdown = data.markdown || "";
+    state.currentMeta = data.metadata;
+    state.isEditing = false;
     renderReader(data.metadata, data.markdown);
     renderMeta(data.metadata);
   } catch (e) {
@@ -517,16 +523,77 @@ function renderReader(meta, md) {
 
   $("#reader").innerHTML = `
     <div class="reader-header">
-      <h1>${esc(meta.title)}</h1>
-      <div class="meta-row">
-        <span>${bits.join(" · ")}</span>
-        <span class="tags">${tagsHtml}</span>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+        <div>
+          <h1>${esc(meta.title)}</h1>
+          <div class="meta-row">
+            <span>${bits.join(" · ")}</span>
+            <span class="tags">${tagsHtml}</span>
+          </div>
+        </div>
+        <button class="mini-btn" onclick="enterEditMode()">Edit markdown</button>
       </div>
     </div>
     <div class="markdown" id="md-body"></div>`;
   $("#md-body").innerHTML = DOMPurify.sanitize(marked.parse(md || "*No content.*"));
   document.querySelectorAll("#md-body pre code").forEach(b => { try { hljs.highlightElement(b); } catch(e){} });
   $("#reader-pane").scrollTop = 0;
+}
+
+function enterEditMode() {
+  if (!state.current || !state.currentMeta) return;
+  state.isEditing = true;
+  const meta = state.currentMeta;
+  const md = state.currentMarkdown || "";
+  const bits = [];
+  if (meta.source_url) bits.push(`<a href="${esc(meta.source_url)}" target="_blank" rel="noopener">source ↗</a>`);
+  if (meta.channel) bits.push(esc(meta.channel));
+  const dt = fmtDate(meta.date_published) || fmtDate(meta.date_ingested);
+  if (dt) bits.push(dt);
+  $("#reader").innerHTML = `
+    <div class="reader-header">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+        <div>
+          <h1>${esc(meta.title)}</h1>
+          <div class="meta-row"><span>${bits.join(" · ")}</span></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="mini-btn" onclick="cancelEditMode()">Cancel</button>
+          <button class="mini-btn restore" onclick="saveEditedMarkdown()">Save</button>
+        </div>
+      </div>
+    </div>
+    <div style="margin-bottom:12px;color:var(--text-dim);font-size:12px">
+      Keep the section headings so it stays clear what was original transcription/imported source versus your notes and edited version.
+    </div>
+    <textarea id="editor-body" style="width:100%;min-height:70vh;padding:14px 16px;background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);outline:none;font-family:var(--font-mono);font-size:13px;line-height:1.6;resize:vertical"></textarea>`;
+  $("#editor-body").value = md;
+}
+
+function cancelEditMode() {
+  if (!state.currentMeta) return;
+  state.isEditing = false;
+  renderReader(state.currentMeta, state.currentMarkdown);
+}
+
+async function saveEditedMarkdown() {
+  if (!state.current) return;
+  const textarea = $("#editor-body");
+  const markdown = textarea.value;
+  try {
+    const r = await fetch("/api/item/" + state.current.split("/").map(encodeURIComponent).join("/") + "/edit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ markdown }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    state.currentMarkdown = markdown;
+    state.isEditing = false;
+    await loadLibrary();
+    renderReader(state.currentMeta, markdown);
+  } catch (e) {
+    alert("Save failed: " + e.message);
+  }
 }
 
 /* ============================== Metadata panel ============================== */

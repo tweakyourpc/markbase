@@ -62,12 +62,40 @@ def _safe_item_dir(rel_path: str) -> Path:
     return target
 
 
-def _read_content_md(item_dir: Path) -> str:
+def _content_file(item_dir: Path) -> Path | None:
     for name in ("content.md", "transcript.md"):
         f = item_dir / name
         if f.exists():
-            return f.read_text(encoding="utf-8")
-    return ""
+            return f
+    return None
+
+
+def _read_content_md(item_dir: Path) -> str:
+    f = _content_file(item_dir)
+    return f.read_text(encoding="utf-8") if f else ""
+
+
+def _ensure_editable_markdown(item_dir: Path, metadata: dict[str, Any]) -> tuple[Path, str]:
+    existing = _content_file(item_dir)
+    title = metadata.get("title") or "Untitled"
+    source_text = existing.read_text(encoding="utf-8") if existing else ""
+    content_path = item_dir / "content.md"
+    if content_path.exists():
+        return content_path, source_text
+
+    structured = (
+        f"# {title}\n\n"
+        "## Original transcription / imported source\n\n"
+        f"{source_text.strip() or '_No original source text available._'}\n\n"
+        "---\n\n"
+        "## Notes / annotations\n\n"
+        "_Add notes, highlights, corrections, or commentary here._\n\n"
+        "---\n\n"
+        "## Edited version\n\n"
+        "_Optionally create a cleaned up or corrected version here._\n"
+    )
+    ingest.atomic_write_text(content_path, structured)
+    return content_path, structured
 
 
 YT_VIDEO_RE = re.compile(r"(youtube\.com/watch\?|youtu\.be/|youtube\.com/shorts/)", re.I)
@@ -130,7 +158,15 @@ def api_item(path: str) -> JSONResponse:
         raise HTTPException(status_code=404, detail="Item metadata not found")
     meta = {**ingest.new_metadata(), **meta}
     meta["path"] = item_dir.relative_to(ingest.library_path()).as_posix()
-    return JSONResponse({"metadata": meta, "markdown": _read_content_md(item_dir)})
+    markdown = _read_content_md(item_dir)
+    editable_file = _content_file(item_dir)
+    return JSONResponse(
+        {
+            "metadata": meta,
+            "markdown": markdown,
+            "editable": editable_file.name if editable_file else None,
+        }
+    )
 
 
 @app.delete("/api/item/{path:path}")
@@ -299,6 +335,24 @@ def api_search(q: str = "") -> JSONResponse:
 # --------------------------------------------------------------------------- #
 # Tags
 # --------------------------------------------------------------------------- #
+
+
+@app.post("/api/item/{path:path}/edit")
+def api_edit_item(path: str, body: dict[str, Any]) -> JSONResponse:
+    item_dir = _safe_item_dir(path)
+    meta = ingest.read_json(item_dir / "metadata.json")
+    if not isinstance(meta, dict):
+        raise HTTPException(status_code=404, detail="Item metadata not found")
+    meta = {**ingest.new_metadata(), **meta}
+    content = str(body.get("markdown") or "")
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="Edited markdown cannot be empty")
+    content_path, _ = _ensure_editable_markdown(item_dir, meta)
+    ingest.atomic_write_text(content_path, content)
+    meta["word_count"] = len(content.split())
+    ingest.atomic_write_json(item_dir / "metadata.json", meta)
+    ingest.update_index()
+    return JSONResponse({"path": path, "saved": True, "editable": content_path.name})
 
 
 @app.post("/api/tag")
