@@ -329,7 +329,7 @@
   <div class="panel">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px">
       <h3 style="margin:0">Job Queue</h3>
-      <button class="mini-btn" id="clear-completed-btn" onclick="clearCompletedJobs()">Clear completed</button>
+      <button class="mini-btn" id="clear-completed-btn" onclick="clearCompletedJobs()">Clear finished</button>
     </div>
     <div class="queue-list" id="queue-list"><div style="color:var(--text-dim);font-size:12px">No jobs yet.</div></div>
   </div>
@@ -749,9 +749,9 @@ async function pollQueue() {
 }
 function renderQueue(jobs) {
   const list = $("#queue-list");
-  const visibleJobs = jobs.filter(j => j.status !== "done");
-  $("#clear-completed-btn").disabled = !jobs.some(j => j.status === "done");
-  if (!visibleJobs.length) { list.innerHTML = `<div style="color:var(--text-dim);font-size:12px">No active, queued, or failed jobs.</div>`; return; }
+  const visibleJobs = jobs.filter(j => j.status !== "done" && j.status !== "failed");
+  $("#clear-completed-btn").disabled = !jobs.some(j => j.status === "done" || j.status === "failed");
+  if (!visibleJobs.length) { list.innerHTML = `<div style="color:var(--text-dim);font-size:12px">No active or queued jobs.</div>`; return; }
   list.innerHTML = visibleJobs.slice(0, 15).map(j => {
     const label = j.original_name || j.payload || j.type;
     return `<div class="job">

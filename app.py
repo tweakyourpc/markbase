@@ -230,7 +230,7 @@ def api_queue() -> JSONResponse:
 
 @app.post("/api/queue/clear-completed")
 def api_queue_clear_completed() -> JSONResponse:
-    return JSONResponse({"cleared": queue_worker.clear_completed_jobs()})
+    return JSONResponse({"cleared": queue_worker.clear_finished_jobs()})
 
 
 # --------------------------------------------------------------------------- #

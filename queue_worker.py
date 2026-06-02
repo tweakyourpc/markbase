@@ -110,10 +110,10 @@ def queue_status() -> dict[str, Any]:
     return {"counts": counts, "jobs": jobs}
 
 
-def clear_completed_jobs() -> int:
-    """Remove completed jobs from the queue history."""
+def clear_finished_jobs() -> int:
+    """Remove finished jobs (done or failed) from the queue history."""
     with _LOCK, _connect() as conn:
-        cur = conn.execute("DELETE FROM jobs WHERE status='done'")
+        cur = conn.execute("DELETE FROM jobs WHERE status IN ('done', 'failed')")
         return int(cur.rowcount or 0)
 
 
