@@ -1,0 +1,29 @@
+# --- MarkBase: keep personal data & local state out of git ---
+# The content library (videos, notes, docs, index, queue DB) is user data.
+library/
+*.migrated-*/
+
+# Operational state / queue
+jobs.db
+jobs.db-*
+*.sqlite
+*.sqlite3
+
+# Local config (also lives in ~/.config/markbase, never in-repo)
+markbase.env
+
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

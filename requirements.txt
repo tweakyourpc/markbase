@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+markitdown[all]
+yt-dlp
+python-multipart
+aiofiles

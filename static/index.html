@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MarkBase</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+<style>
+  :root {
+    --bg: #0f1115;
+    --bg-elev: #161922;
+    --bg-elev2: #1d212c;
+    --border: #262b38;
+    --text: #e6e8ee;
+    --text-dim: #98a0b3;
+    --text-faint: #5d6478;
+    --accent: #6ea8fe;
+    --accent-soft: rgba(110,168,254,0.15);
+    --green: #4ade80;
+    --yellow: #fbbf24;
+    --red: #f87171;
+    --blue: #60a5fa;
+    --sidebar-w: 250px;
+    --right-w: 300px;
+    --radius: 8px;
+    --reader-max: 720px;
+    --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-read: "Iowan Old Style", "Palatino Linotype", "Georgia", serif;
+    --font-mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    display: flex;
+    overflow: hidden;
+  }
+  button { font-family: inherit; cursor: pointer; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  /* ---------------- Sidebar ---------------- */
+  #sidebar {
+    width: var(--sidebar-w);
+    min-width: var(--sidebar-w);
+    background: var(--bg-elev);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    transition: margin-left .2s ease;
+  }
+  .brand {
+    padding: 14px 16px;
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: .3px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .brand .dot { width: 10px; height: 10px; border-radius: 3px; background: var(--accent); }
+  .sb-tools { padding: 10px; border-bottom: 1px solid var(--border); }
+  .search-wrap { position: relative; }
+  #search {
+    width: 100%;
+    padding: 8px 10px 8px 30px;
+    background: var(--bg-elev2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    outline: none;
+  }
+  #search:focus { border-color: var(--accent); }
+  .search-wrap::before {
+    content: "⌕"; position: absolute; left: 9px; top: 6px;
+    color: var(--text-dim); font-size: 15px;
+  }
+  .kbd-hint { position: absolute; right: 8px; top: 8px; font-size: 10px; color: var(--text-dim); }
+  #tag-filter { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .tag-chip {
+    font-size: 11px; padding: 2px 8px; border-radius: 20px;
+    background: var(--bg-elev2); border: 1px solid var(--border);
+    color: var(--text-dim); cursor: pointer;
+  }
+  .tag-chip.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+  .tree { flex: 1; overflow-y: auto; padding: 6px 4px 20px; }
+  .sb-footer { border-top: 1px solid var(--border); padding: 8px 10px; }
+  .sb-footer-btn {
+    width: 100%; text-align: left; background: transparent; border: none;
+    color: var(--text-dim); padding: 7px 8px; border-radius: 6px; font-size: 13px;
+  }
+  .sb-footer-btn:hover { background: var(--bg-elev2); color: var(--text); }
+  #trash-count { color: var(--text-faint); font-size: 11px; }
+
+  /* Trash view (center pane) */
+  .trash-view { max-width: var(--reader-max); margin: 0 auto; padding: 40px 32px 100px; }
+  .trash-view h1 { font-family: var(--font-ui); font-size: 24px; margin: 0 0 4px; }
+  .trash-view .sub { color: var(--text-dim); font-size: 13px; margin-bottom: 20px; }
+  .trash-row {
+    display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+    background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px;
+  }
+  .trash-row .info { flex: 1; min-width: 0; }
+  .trash-row .t { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .trash-row .meta { color: var(--text-dim); font-size: 12px; margin-top: 2px; }
+  .mini-btn { padding: 6px 11px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-elev2); color: var(--text); font-size: 12px; white-space: nowrap; }
+  .mini-btn.restore { color: var(--green); }
+  .mini-btn.restore:hover { background: rgba(74,222,128,.12); border-color: var(--green); }
+  .mini-btn.del { color: var(--red); }
+  .mini-btn.del:hover { background: rgba(248,113,113,.12); border-color: var(--red); }
+  .tree-group > .tree-label {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 10px; cursor: pointer; user-select: none;
+    color: var(--text-dim); font-weight: 600; font-size: 12px;
+    text-transform: uppercase; letter-spacing: .5px;
+  }
+  .tree-label .caret { transition: transform .15s; font-size: 10px; }
+  .tree-group.collapsed > .tree-children { display: none; }
+  .tree-group.collapsed > .tree-label .caret { transform: rotate(-90deg); }
+  .tree-children { margin-left: 6px; }
+  .tree-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 10px; border-radius: 6px; cursor: pointer;
+    color: var(--text); font-size: 13px;
+  }
+  .tree-item:hover { background: var(--bg-elev2); }
+  .tree-item.active { background: var(--accent-soft); color: var(--accent); }
+  .tree-item .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge {
+    font-size: 9px; padding: 1px 6px; border-radius: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .3px;
+  }
+  .badge.converted { background: rgba(74,222,128,.15); color: var(--green); }
+  .badge.queued { background: rgba(251,191,36,.15); color: var(--yellow); }
+  .badge.processing { background: rgba(96,165,250,.15); color: var(--blue); }
+  .badge.done { background: rgba(74,222,128,.15); color: var(--green); }
+  .badge.failed { background: rgba(248,113,113,.18); color: var(--red); }
+  .badge.none { background: var(--bg-elev2); color: var(--text-dim); }
+
+  /* ---------------- Reader ---------------- */
+  #reader-pane {
+    flex: 1; height: 100%; overflow-y: auto;
+    background: var(--bg);
+  }
+  #reader { max-width: var(--reader-max); margin: 0 auto; padding: 48px 32px 120px; }
+  .reader-header { border-bottom: 1px solid var(--border); padding-bottom: 20px; margin-bottom: 28px; }
+  .reader-header h1 { font-family: var(--font-read); font-size: 30px; line-height: 1.25; margin: 0 0 12px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 14px; color: var(--text-dim); font-size: 12px; }
+  .meta-row .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  .empty-state {
+    height: 100%; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; color: var(--text-dim); gap: 12px; text-align: center;
+  }
+  .empty-state .big { font-size: 42px; opacity: .5; }
+
+  .markdown { font-family: var(--font-read); font-size: 18px; line-height: 1.7; color: #d7dae3; }
+  .markdown h1, .markdown h2, .markdown h3 { font-family: var(--font-ui); line-height: 1.3; margin-top: 1.6em; }
+  .markdown h1 { font-size: 1.6em; }
+  .markdown h2 { font-size: 1.35em; }
+  .markdown h3 { font-size: 1.15em; }
+  .markdown p { margin: 1em 0; }
+  .markdown a { color: var(--accent); }
+  .markdown img { max-width: 100%; border-radius: 6px; }
+  .markdown blockquote {
+    border-left: 3px solid var(--accent); margin: 1em 0; padding: 4px 16px;
+    color: var(--text-dim); background: var(--bg-elev);
+  }
+  .markdown code {
+    font-family: var(--font-mono); font-size: .82em;
+    background: var(--bg-elev2); padding: 2px 5px; border-radius: 4px;
+  }
+  .markdown pre {
+    background: var(--bg-elev) !important; border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px; overflow-x: auto;
+  }
+  .markdown pre code { background: transparent; padding: 0; font-size: 13.5px; }
+  .markdown table { border-collapse: collapse; width: 100%; font-size: .85em; }
+  .markdown th, .markdown td { border: 1px solid var(--border); padding: 6px 10px; }
+
+  /* ---------------- Right panel ---------------- */
+  #right { width: var(--right-w); min-width: var(--right-w); background: var(--bg-elev);
+    border-left: 1px solid var(--border); display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
+  .panel { padding: 14px; border-bottom: 1px solid var(--border); }
+  .panel h3 { margin: 0 0 12px; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-dim); }
+  .field { margin-bottom: 10px; }
+  .field input[type=text], .field input[type=url] {
+    width: 100%; padding: 8px 10px; background: var(--bg-elev2);
+    border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); outline: none;
+  }
+  .field input:focus { border-color: var(--accent); }
+  .btn {
+    width: 100%; padding: 9px; border: none; border-radius: var(--radius);
+    background: var(--accent); color: #08101f; font-weight: 600;
+  }
+  .btn:hover { filter: brightness(1.08); }
+  .btn.secondary { background: var(--bg-elev2); color: var(--text); border: 1px solid var(--border); }
+  .btn.danger { background: transparent; color: var(--red); border: 1px solid var(--border); }
+  .btn.danger:hover { background: rgba(248,113,113,.12); border-color: var(--red); filter: none; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .detect-hint { font-size: 11px; color: var(--text-dim); margin: 4px 2px 8px; min-height: 14px; }
+  .file-label {
+    display: block; text-align: center; padding: 9px; border: 1px dashed var(--border);
+    border-radius: var(--radius); color: var(--text-dim); margin-bottom: 8px;
+  }
+  .file-label:hover { border-color: var(--accent); color: var(--accent); }
+  #file-input { display: none; }
+
+  .queue-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+  .job {
+    background: var(--bg-elev2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 9px; font-size: 12px;
+  }
+  .job-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .job .label { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .job .err { color: var(--red); font-size: 11px; margin-top: 4px; word-break: break-word; }
+
+  .meta-table { width: 100%; font-size: 12px; }
+  .meta-table td { padding: 4px 0; vertical-align: top; }
+  .meta-table td.k { color: var(--text-dim); width: 38%; }
+  .meta-table td.v { color: var(--text); word-break: break-word; }
+  .tag-edit { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; align-items: center; }
+  .tag-pill {
+    font-size: 11px; padding: 2px 6px 2px 8px; border-radius: 20px;
+    background: var(--accent-soft); color: var(--accent); display: inline-flex; gap: 5px; align-items: center;
+  }
+  .tag-pill .x { cursor: pointer; font-weight: 700; opacity: .7; }
+  .tag-pill .x:hover { opacity: 1; }
+  #tag-input { flex: 1; min-width: 80px; background: transparent; border: none; color: var(--text); outline: none; font-size: 12px; }
+
+  /* ---------------- Top bar (mobile) ---------------- */
+  #topbar { display: none; align-items: center; gap: 10px; padding: 8px 12px;
+    background: var(--bg-elev); border-bottom: 1px solid var(--border); }
+  .icon-btn { background: var(--bg-elev2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 6px 10px; }
+  .collapse-btn { margin-left: auto; }
+
+  @media (max-width: 1100px) {
+    #right { position: fixed; right: 0; top: 0; height: 100%; z-index: 30; box-shadow: -8px 0 24px rgba(0,0,0,.4); transform: translateX(0); transition: transform .2s; }
+    body.right-collapsed #right { transform: translateX(100%); }
+  }
+  @media (max-width: 760px) {
+    #topbar { display: flex; }
+    body { flex-direction: column; }
+    #sidebar { position: fixed; left: 0; top: 0; height: 100%; z-index: 40; }
+    body.sidebar-collapsed #sidebar { margin-left: calc(-1 * var(--sidebar-w)); }
+    #reader { padding: 24px 16px 100px; }
+    .markdown { font-size: 17px; }
+  }
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 25; }
+  body.sidebar-collapsed.has-overlay .overlay { display: block; }
+</style>
+</head>
+<body class="right-collapsed">
+
+<!-- Mobile top bar -->
+<div id="topbar">
+  <button class="icon-btn" onclick="toggleSidebar()">☰</button>
+  <strong>MarkBase</strong>
+  <button class="icon-btn collapse-btn" onclick="toggleRight()">⚙</button>
+</div>
+
+<div class="overlay" onclick="toggleSidebar()"></div>
+
+<!-- LEFT SIDEBAR -->
+<aside id="sidebar">
+  <div class="brand"><span class="dot"></span> MarkBase</div>
+  <div class="sb-tools">
+    <div class="search-wrap">
+      <input id="search" type="text" placeholder="Search…" autocomplete="off" />
+      <span class="kbd-hint">⌘K</span>
+    </div>
+    <div id="tag-filter"></div>
+  </div>
+  <div class="tree" id="tree"></div>
+  <div class="sb-footer">
+    <button class="sb-footer-btn" id="trash-btn" onclick="openTrash()">🗑 Trash <span id="trash-count"></span></button>
+  </div>
+</aside>
+
+<!-- CENTER READER -->
+<main id="reader-pane">
+  <div id="reader">
+    <div class="empty-state">
+      <div class="big">📖</div>
+      <div>Select an item from the library to start reading.</div>
+      <div style="font-size:12px">Ingest something new from the panel on the right.</div>
+    </div>
+  </div>
+</main>
+
+<!-- RIGHT PANEL -->
+<aside id="right">
+  <div class="panel">
+    <h3>Ingest</h3>
+    <div class="field">
+      <input id="ingest-url" type="text" placeholder="YouTube / channel / URL…" autocomplete="off" />
+    </div>
+    <div class="detect-hint" id="detect-hint"></div>
+    <label class="file-label" for="file-input" id="file-label">⤴ Upload a file (PDF, docx, …)</label>
+    <input id="file-input" type="file" />
+    <button class="btn" id="ingest-btn" onclick="submitIngest()">Submit</button>
+  </div>
+
+  <div class="panel">
+    <h3>Save to MarkBase</h3>
+    <div class="field">
+      <input id="note-title" type="text" placeholder="Note title…" autocomplete="off" />
+    </div>
+    <div class="field">
+      <textarea id="note-body" placeholder="Write Markdown… snippets, findings, links."
+        rows="6" style="width:100%;padding:8px 10px;background:var(--bg-elev2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);outline:none;font-family:var(--font-mono);font-size:12.5px;resize:vertical"></textarea>
+    </div>
+    <div class="field">
+      <input id="note-tags" type="text" placeholder="tags, comma, separated" autocomplete="off" />
+    </div>
+    <div class="detect-hint" id="note-hint"></div>
+    <button class="btn" id="note-btn" onclick="submitNote()">＋ Save Note</button>
+  </div>
+
+  <div class="panel">
+    <h3>Job Queue</h3>
+    <div class="queue-list" id="queue-list"><div style="color:var(--text-dim);font-size:12px">No jobs yet.</div></div>
+  </div>
+
+  <div class="panel" id="meta-panel">
+    <h3>Metadata</h3>
+    <div id="meta-body"><div style="color:var(--text-dim);font-size:12px">No item selected.</div></div>
+  </div>
+</aside>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.5/purify.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+/* ============================== State ============================== */
+const state = {
+  index: { items: [] },
+  current: null,        // currently viewed item path
+  searchTerm: "",
+  activeTags: new Set(),
+  serverResults: null,  // full-text search results (paths) or null
+};
+
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+marked.setOptions({
+  highlight: (code, lang) => {
+    try {
+      return (lang && hljs.getLanguage(lang))
+        ? hljs.highlight(code, { language: lang }).value
+        : hljs.highlightAuto(code).value;
+    } catch (e) { return esc(code); }
+  },
+});
+
+/* ============================== Library / tree ============================== */
+async function loadLibrary() {
+  try {
+    const r = await fetch("/api/library");
+    state.index = await r.json();
+  } catch (e) { state.index = { items: [] }; }
+  renderTagFilter();
+  renderTree();
+  refreshTrashCount();
+}
+
+function statusBadge(item) {
+  const s = item.ai_status && item.ai_status !== "none" ? item.ai_status : item.status;
+  return `<span class="badge ${esc(item.status)}">${esc(item.status)}</span>`;
+}
+
+function matchesFilters(item) {
+  // Tag filter (AND).
+  for (const t of state.activeTags) {
+    if (!(item.tags || []).includes(t)) return false;
+  }
+  // Server full-text results take precedence when a search is active.
+  if (state.serverResults) {
+    return state.serverResults.has(item.path);
+  }
+  // Client-side metadata search.
+  if (state.searchTerm) {
+    const hay = [item.title, item.channel, (item.tags||[]).join(" "), item.source_url]
+      .join(" ").toLowerCase();
+    return hay.includes(state.searchTerm);
+  }
+  return true;
+}
+
+function renderTree() {
+  const items = (state.index.items || []).filter(matchesFilters);
+  const yt = items.filter(i => i.source_type === "youtube_video");
+  const notes = items.filter(i => i.source_type === "note");
+  const docs = items.filter(i => i.source_type !== "youtube_video" && i.source_type !== "note");
+
+  // Group YouTube by channel.
+  const byChannel = {};
+  for (const v of yt) {
+    const ch = v.channel || "@unknown";
+    (byChannel[ch] = byChannel[ch] || []).push(v);
+  }
+
+  const tree = $("#tree");
+  let html = "";
+
+  // SOURCES > YOUTUBE
+  html += group("YouTube", "yt-root", Object.keys(byChannel).sort().map(ch => {
+    const vids = byChannel[ch].map(itemRow).join("");
+    return group(esc(ch), "ch-" + slug(ch), vids, 1);
+  }).join("") || emptyNote("No videos yet"));
+
+  // NOTES
+  html += group("Notes", "notes-root", notes.map(itemRow).join("") || emptyNote("No notes yet"));
+
+  // DOCS
+  html += group("Docs", "docs-root", docs.map(itemRow).join("") || emptyNote("No documents yet"));
+
+  // ALL ITEMS
+  html += group("All Items", "all-root", items.map(itemRow).join("") || emptyNote("Library is empty"), 0, true);
+
+  tree.innerHTML = html;
+  // Re-highlight active item.
+  if (state.current) {
+    tree.querySelectorAll(`.tree-item[data-path="${cssEsc(state.current)}"]`).forEach(el => el.classList.add("active"));
+  }
+}
+
+function slug(s){ return String(s).replace(/[^a-z0-9]+/gi,"-"); }
+function cssEsc(s){ return String(s).replace(/["\\]/g, "\\$&"); }
+function emptyNote(t){ return `<div style="padding:6px 12px;color:var(--text-faint);font-size:12px">${esc(t)}</div>`; }
+
+function group(label, id, children, depth = 0, collapsed = false) {
+  return `<div class="tree-group ${collapsed ? "collapsed" : ""}" id="g-${id}">
+    <div class="tree-label" onclick="document.getElementById('g-${id}').classList.toggle('collapsed')">
+      <span class="caret">▾</span><span>${label}</span>
+    </div>
+    <div class="tree-children">${children}</div>
+  </div>`;
+}
+
+function itemRow(item) {
+  return `<div class="tree-item" data-path="${esc(item.path)}" onclick="openItem('${cssEsc(item.path)}')">
+    <span class="title">${esc(item.title)}</span>
+    <span class="badge ${esc(item.status)}">${esc(item.status)}</span>
+  </div>`;
+}
+
+/* ============================== Tag filter ============================== */
+function renderTagFilter() {
+  const counts = {};
+  for (const it of state.index.items || []) {
+    for (const t of it.tags || []) counts[t] = (counts[t]||0)+1;
+  }
+  const tags = Object.keys(counts).sort();
+  const wrap = $("#tag-filter");
+  if (!tags.length) { wrap.innerHTML = ""; return; }
+  wrap.innerHTML = tags.map(t =>
+    `<span class="tag-chip ${state.activeTags.has(t)?"active":""}" onclick="toggleTag('${cssEsc(t)}')">${esc(t)}</span>`
+  ).join("");
+}
+function toggleTag(t) {
+  state.activeTags.has(t) ? state.activeTags.delete(t) : state.activeTags.add(t);
+  renderTagFilter(); renderTree();
+}
+
+/* ============================== Reader ============================== */
+async function openItem(path) {
+  state.current = path;
+  try {
+    const r = await fetch("/api/item/" + path.split("/").map(encodeURIComponent).join("/"));
+    if (!r.ok) throw new Error("not found");
+    const data = await r.json();
+    renderReader(data.metadata, data.markdown);
+    renderMeta(data.metadata);
+  } catch (e) {
+    $("#reader").innerHTML = `<div class="empty-state"><div class="big">⚠️</div><div>Could not load item.</div></div>`;
+  }
+  renderTree();
+  if (window.innerWidth <= 760) collapseSidebar(true);
+}
+
+function fmtDuration(s) {
+  // Accept seconds (number/string) or ISO 8601 like "PT21M54S".
+  if (typeof s === "string" && /^P/i.test(s)) {
+    const m = s.match(/^P(?:\d+D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/i);
+    s = m ? (+(m[1]||0))*3600 + (+(m[2]||0))*60 + (+(m[3]||0)) : 0;
+  }
+  s = parseInt(s||0,10); if (!s) return null;
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+  return (h?`${h}:`:"") + String(m).padStart(h?2:1,"0") + ":" + String(sec).padStart(2,"0");
+}
+function fmtDate(d){ if(!d) return null; try { return new Date(d).toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"}); } catch(e){ return d; } }
+
+function renderReader(meta, md) {
+  const bits = [];
+  if (meta.source_url) bits.push(`<a href="${esc(meta.source_url)}" target="_blank" rel="noopener">source ↗</a>`);
+  if (meta.channel) bits.push(esc(meta.channel));
+  const dt = fmtDate(meta.date_published) || fmtDate(meta.date_ingested);
+  if (dt) bits.push(dt);
+  const dur = fmtDuration(meta.duration_seconds);
+  if (dur) bits.push("⏱ " + dur);
+  if (meta.word_count) bits.push(meta.word_count.toLocaleString() + " words");
+
+  const tagsHtml = (meta.tags||[]).map(t=>`<span class="tag-chip active">${esc(t)}</span>`).join("");
+
+  $("#reader").innerHTML = `
+    <div class="reader-header">
+      <h1>${esc(meta.title)}</h1>
+      <div class="meta-row">
+        <span>${bits.join(" · ")}</span>
+        <span class="tags">${tagsHtml}</span>
+      </div>
+    </div>
+    <div class="markdown" id="md-body"></div>`;
+  $("#md-body").innerHTML = DOMPurify.sanitize(marked.parse(md || "*No content.*"));
+  document.querySelectorAll("#md-body pre code").forEach(b => { try { hljs.highlightElement(b); } catch(e){} });
+  $("#reader-pane").scrollTop = 0;
+}
+
+/* ============================== Metadata panel ============================== */
+function renderMeta(meta) {
+  const rows = [
+    ["Type", meta.source_type],
+    ["Channel", meta.channel],
+    ["Published", fmtDate(meta.date_published)],
+    ["Ingested", fmtDate(meta.date_ingested)],
+    ["Duration", fmtDuration(meta.duration_seconds)],
+    ["Words", meta.word_count ? meta.word_count.toLocaleString() : null],
+    ["Status", meta.status],
+    ["AI", meta.ai_status],
+  ].filter(([,v]) => v !== null && v !== undefined && v !== "");
+
+  const tagPills = (meta.tags||[]).map(t =>
+    `<span class="tag-pill">${esc(t)}<span class="x" onclick="removeTag('${cssEsc(t)}')">×</span></span>`
+  ).join("");
+
+  $("#meta-body").innerHTML = `
+    <table class="meta-table">
+      ${rows.map(([k,v]) => `<tr><td class="k">${esc(k)}</td><td class="v">${esc(v)}</td></tr>`).join("")}
+    </table>
+    <div style="margin-top:10px">
+      <div class="k" style="color:var(--text-dim);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Tags</div>
+      <div class="tag-edit">
+        ${tagPills}
+        <input id="tag-input" placeholder="add tag…" onkeydown="if(event.key==='Enter')addTag()" />
+      </div>
+    </div>
+    <button class="btn danger" style="margin-top:14px" onclick="deleteCurrent()">🗑 Delete</button>
+  `;
+}
+
+/* ============================== Trash ============================== */
+async function refreshTrashCount() {
+  try {
+    const r = await fetch("/api/trash");
+    const d = await r.json();
+    const n = (d.items || []).length;
+    $("#trash-count").textContent = n ? `(${n})` : "";
+  } catch (e) {}
+}
+
+async function openTrash() {
+  state.current = null;
+  renderTree();
+  let items = [];
+  try { items = (await (await fetch("/api/trash")).json()).items || []; } catch (e) {}
+
+  const rows = items.map(it => `
+    <div class="trash-row" data-name="${esc(it.trash_name)}">
+      <div class="info">
+        <div class="t">${esc(it.title)}</div>
+        <div class="meta">${esc(it.original_path)}${it.deleted_at ? " · deleted " + (fmtDate(it.deleted_at) || "") : ""}</div>
+      </div>
+      <button class="mini-btn restore" onclick="restoreTrash('${cssEsc(it.trash_name)}')">↩ Restore</button>
+      <button class="mini-btn del" onclick="purgeTrashItem('${cssEsc(it.trash_name)}')">Delete forever</button>
+    </div>`).join("");
+
+  $("#reader").innerHTML = `
+    <div class="trash-view">
+      <h1>🗑 Trash</h1>
+      <div class="sub">${items.length ? items.length + " item(s) · auto-removed after 30 days" : "Trash is empty."}</div>
+      ${items.length ? `<div style="margin-bottom:16px"><button class="btn danger" style="width:auto;padding:8px 14px" onclick="emptyTrash()">Empty Trash</button></div>` : ""}
+      ${rows}
+    </div>`;
+  $("#meta-body").innerHTML = `<div style="color:var(--text-dim);font-size:12px">No item selected.</div>`;
+}
+
+async function restoreTrash(name) {
+  try {
+    const r = await fetch("/api/trash/" + encodeURIComponent(name) + "/restore", { method: "POST" });
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    await loadLibrary();
+    await openTrash();
+    if (d.restored) openItem(d.restored);
+  } catch (e) { alert("Restore failed: " + e.message); }
+}
+
+async function purgeTrashItem(name) {
+  if (!confirm("Permanently delete this item? This cannot be undone.")) return;
+  try {
+    await fetch("/api/trash/" + encodeURIComponent(name), { method: "DELETE" });
+    await openTrash(); refreshTrashCount();
+  } catch (e) { alert("Delete failed: " + e.message); }
+}
+
+async function emptyTrash() {
+  if (!confirm("Permanently delete everything in the Trash? This cannot be undone.")) return;
+  try {
+    await fetch("/api/trash/empty", { method: "POST" });
+    await openTrash(); refreshTrashCount();
+  } catch (e) { alert("Empty trash failed: " + e.message); }
+}
+
+async function deleteCurrent() {
+  if (!state.current) return;
+  if (!confirm("Move this item to Trash?\n\nIt will be removed from your library but kept in _trash and can be restored manually.")) return;
+  try {
+    const r = await fetch("/api/item/" + state.current.split("/").map(encodeURIComponent).join("/"), { method: "DELETE" });
+    if (!r.ok) throw new Error(await r.text());
+    const gone = state.current;
+    state.current = null;
+    $("#reader").innerHTML = `<div class="empty-state"><div class="big">🗑</div><div>Moved to Trash.</div></div>`;
+    $("#meta-body").innerHTML = `<div style="color:var(--text-dim);font-size:12px">No item selected.</div>`;
+    await loadLibrary();
+    refreshTrashCount();
+  } catch (e) {
+    alert("Delete failed: " + e.message);
+  }
+}
+
+async function addTag() {
+  const inp = $("#tag-input"); const t = inp.value.trim();
+  if (!t || !state.current) return;
+  await postTag({ path: state.current, add: t });
+}
+async function removeTag(t) {
+  if (!state.current) return;
+  await postTag({ path: state.current, remove: t });
+}
+async function postTag(body) {
+  try {
+    await fetch("/api/tag", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+    await loadLibrary();
+    // Refresh current view's metadata.
+    const r = await fetch("/api/item/" + state.current.split("/").map(encodeURIComponent).join("/"));
+    const data = await r.json();
+    renderReader(data.metadata, data.markdown);
+    renderMeta(data.metadata);
+  } catch(e) {}
+}
+
+/* ============================== Ingest ============================== */
+function detectType(v) {
+  v = v.trim();
+  if (!v) return "";
+  if (v.startsWith("@") && !v.includes(" ")) return "YouTube channel";
+  if (v.includes("youtube.com") || v.includes("youtu.be")) {
+    if (/watch\?|youtu\.be\/|\/shorts\//i.test(v)) return "YouTube video";
+    if (/\/@|\/channel\/|\/c\/|\/user\/|playlist\?/i.test(v)) return "YouTube channel";
+    return "YouTube video";
+  }
+  return "Web page / URL";
+}
+$("#ingest-url").addEventListener("input", e => {
+  const t = detectType(e.target.value);
+  $("#detect-hint").textContent = t ? "Detected: " + t : "";
+});
+$("#file-input").addEventListener("change", e => {
+  const f = e.target.files[0];
+  $("#file-label").textContent = f ? "📄 " + f.name : "⤴ Upload a file (PDF, docx, …)";
+});
+
+async function submitNote() {
+  const btn = $("#note-btn");
+  const title = $("#note-title").value.trim();
+  const content = $("#note-body").value;
+  const tags = $("#note-tags").value.split(",").map(t => t.trim()).filter(Boolean);
+  if (!title && !content.trim()) { $("#note-hint").textContent = "Add a title or some text."; return; }
+
+  btn.disabled = true; btn.textContent = "Saving…";
+  try {
+    const r = await fetch("/api/note", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, content, tags }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    $("#note-title").value = ""; $("#note-body").value = ""; $("#note-tags").value = "";
+    $("#note-hint").textContent = "Saved ✓";
+    await loadLibrary();
+    openItem(data.path);
+    setTimeout(() => { $("#note-hint").textContent = ""; }, 2500);
+  } catch (e) {
+    $("#note-hint").textContent = "Error: " + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = "＋ Save Note";
+  }
+}
+
+async function submitIngest() {
+  const btn = $("#ingest-btn");
+  const url = $("#ingest-url").value.trim();
+  const file = $("#file-input").files[0];
+  if (!url && !file) return;
+
+  btn.disabled = true; btn.textContent = "Queuing…";
+  try {
+    const fd = new FormData();
+    if (file) fd.append("file", file);
+    else fd.append("url", url);
+    const r = await fetch("/api/ingest", { method:"POST", body: fd });
+    if (!r.ok) throw new Error(await r.text());
+    $("#ingest-url").value = ""; $("#detect-hint").textContent = "";
+    $("#file-input").value = ""; $("#file-label").textContent = "⤴ Upload a file (PDF, docx, …)";
+    pollQueue();
+  } catch(e) {
+    $("#detect-hint").textContent = "Error: " + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = "Submit";
+  }
+}
+
+/* ============================== Queue polling ============================== */
+let lastDoneCount = -1;
+async function pollQueue() {
+  try {
+    const r = await fetch("/api/queue");
+    const data = await r.json();
+    renderQueue(data.jobs || []);
+    const done = (data.counts && data.counts.done) || 0;
+    if (lastDoneCount !== -1 && done !== lastDoneCount) {
+      await loadLibrary(); // a job finished -> refresh sidebar
+    }
+    lastDoneCount = done;
+  } catch(e) {}
+}
+function renderQueue(jobs) {
+  const list = $("#queue-list");
+  if (!jobs.length) { list.innerHTML = `<div style="color:var(--text-dim);font-size:12px">No jobs yet.</div>`; return; }
+  list.innerHTML = jobs.slice(0, 15).map(j => {
+    const label = j.original_name || j.payload || j.type;
+    return `<div class="job">
+      <div class="job-top">
+        <span class="label" title="${esc(label)}">${esc(j.type.replace("_"," "))}: ${esc(trim(label,38))}</span>
+        <span class="badge ${esc(j.status)}">${esc(j.status)}</span>
+      </div>
+      ${j.error_message ? `<div class="err">${esc(j.error_message)}</div>` : ""}
+    </div>`;
+  }).join("");
+}
+function trim(s, n){ s=String(s); return s.length>n ? s.slice(0,n)+"…" : s; }
+
+/* ============================== Search ============================== */
+let searchTimer = null;
+$("#search").addEventListener("input", e => {
+  state.searchTerm = e.target.value.trim().toLowerCase();
+  renderTree(); // instant client-side filter
+  clearTimeout(searchTimer);
+  if (state.searchTerm.length >= 2) {
+    searchTimer = setTimeout(runServerSearch, 300); // full-text after debounce
+  } else {
+    state.serverResults = null;
+    renderTree();
+  }
+});
+async function runServerSearch() {
+  const q = state.searchTerm;
+  try {
+    const r = await fetch("/api/search?q=" + encodeURIComponent(q));
+    const data = await r.json();
+    state.serverResults = new Set((data.results||[]).map(x => x.path));
+    renderTree();
+  } catch(e) { state.serverResults = null; }
+}
+
+/* ============================== Layout toggles ============================== */
+function toggleSidebar(){ document.body.classList.toggle("sidebar-collapsed"); document.body.classList.toggle("has-overlay", !document.body.classList.contains("sidebar-collapsed")); }
+function collapseSidebar(v){ document.body.classList.toggle("sidebar-collapsed", v); }
+function toggleRight(){ document.body.classList.toggle("right-collapsed"); }
+
+/* On wide screens the right panel is visible; collapse only matters on narrow. */
+function syncLayout(){ if (window.innerWidth > 1100) document.body.classList.remove("right-collapsed"); }
+window.addEventListener("resize", syncLayout);
+
+/* ============================== Keyboard ============================== */
+document.addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault(); $("#search").focus(); $("#search").select();
+  }
+});
+
+/* ============================== Boot ============================== */
+syncLayout();
+loadLibrary();
+pollQueue();
+setInterval(pollQueue, 3000);
+</script>
+</body>
+</html>
