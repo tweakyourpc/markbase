@@ -205,33 +205,92 @@ def _ytdlp_available() -> bool:
 # --------------------------------------------------------------------------- #
 
 
-def _vtt_to_text(vtt: str) -> str:
-    """
-    Convert a WebVTT subtitle file into readable prose: drop headers, cue
-    timing, inline word-timing tags, and the rolling duplicate lines that
-    auto-captions produce. Re-flow into paragraphs.
-    """
-    lines: list[str] = []
+def _parse_vtt_timestamp(raw: str) -> float:
+    raw = raw.strip().replace(",", ".")
+    parts = raw.split(":")
+    if len(parts) == 3:
+        hours, minutes, seconds = parts
+    elif len(parts) == 2:
+        hours = "0"
+        minutes, seconds = parts
+    else:
+        return 0.0
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
+def _format_timestamp(seconds: float) -> str:
+    total = int(seconds)
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours:02}:{minutes:02}:{secs:02}"
+    return f"{minutes:02}:{secs:02}"
+
+
+def _vtt_to_segments(vtt: str) -> list[dict[str, Any]]:
+    """Convert WebVTT into cleaned transcript segments with timestamps."""
+    segments: list[dict[str, Any]] = []
+    current_start: float | None = None
+    current_end: float | None = None
+    current_lines: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_start, current_end, current_lines
+        if current_start is None or current_end is None or not current_lines:
+            current_start = None
+            current_end = None
+            current_lines = []
+            return
+        text = " ".join(current_lines)
+        text = re.sub(r"<[^>]+>", "", text)
+        text = re.sub(r"\s+(align|position):\S+", "", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text:
+            current_start = None
+            current_end = None
+            current_lines = []
+            return
+        if segments and (text == segments[-1]["text"] or text in segments[-1]["text"]):
+            current_start = None
+            current_end = None
+            current_lines = []
+            return
+        segments.append(
+            {
+                "start": current_start,
+                "end": current_end,
+                "timestamp": _format_timestamp(current_start),
+                "text": text,
+            }
+        )
+        current_start = None
+        current_end = None
+        current_lines = []
+
     for raw in vtt.splitlines():
         line = raw.strip()
-        if not line or "-->" in line:
+        if not line:
+            flush()
             continue
         if line in ("WEBVTT",) or line.startswith(("Kind:", "Language:", "NOTE")):
             continue
-        if line.isdigit():  # cue index
+        if line.isdigit():
             continue
-        # Strip inline timing/styling tags like <00:00:01.000> and <c>...</c>.
-        line = re.sub(r"<[^>]+>", "", line)
-        line = re.sub(r"\s+(align|position):\S+", "", line)
-        line = line.strip()
-        if not line:
+        if "-->" in line:
+            flush()
+            left, right = [part.strip() for part in line.split("-->", 1)]
+            right = right.split()[0]
+            current_start = _parse_vtt_timestamp(left)
+            current_end = _parse_vtt_timestamp(right)
+            current_lines = []
             continue
-        # Auto-captions repeat the previous line as a rolling window; skip dupes.
-        if lines and (line == lines[-1] or line in lines[-1]):
-            continue
-        lines.append(line)
+        current_lines.append(line)
+    flush()
+    return segments
 
-    # Re-flow short caption fragments into ~sentence-grouped paragraphs.
+
+def _segments_to_text(segments: list[dict[str, Any]]) -> str:
+    lines = [segment["text"] for segment in segments]
     text = " ".join(lines)
     text = re.sub(r"\s+", " ", text).strip()
     paras: list[str] = []
@@ -246,7 +305,7 @@ def _vtt_to_text(vtt: str) -> str:
     return "\n\n".join(paras)
 
 
-def fetch_transcript_via_ytdlp(url: str) -> str | None:
+def fetch_transcript_via_ytdlp(url: str) -> tuple[str, list[dict[str, Any]]] | None:
     """
     Download captions with yt-dlp and return them as clean text. Prefers
     human-authored subtitles; falls back to auto-generated. Returns None if no
@@ -282,8 +341,11 @@ def fetch_transcript_via_ytdlp(url: str) -> str | None:
 
     if not vtt:
         return None
-    text = _vtt_to_text(vtt)
-    return text or None
+    segments = _vtt_to_segments(vtt)
+    text = _segments_to_text(segments)
+    if not text:
+        return None
+    return text, segments
 
 
 def _looks_like_failed_markitdown(md: str) -> bool:
@@ -419,9 +481,12 @@ def ingest_youtube_video(url: str) -> str:
     # 2. Get the transcript. Prefer yt-dlp captions (reliable); fall back to
     #    markitdown only if captions are unavailable.
     header: dict[str, Any] = {}
-    transcript_text = fetch_transcript_via_ytdlp(url)
+    transcript_segments: list[dict[str, Any]] = []
+    transcript_result = fetch_transcript_via_ytdlp(url)
     transcript_source = "yt-dlp captions"
-    if not transcript_text:
+    if transcript_result:
+        transcript_text, transcript_segments = transcript_result
+    else:
         md = run_markitdown(url)
         if _looks_like_failed_markitdown(md):
             log.warning("markitdown returned no usable transcript for %s", url)
@@ -461,6 +526,9 @@ def ingest_youtube_video(url: str) -> str:
         doc_parts.append(transcript_text.strip())
     else:
         doc_parts.append("_No transcript or captions were available for this video._")
+    if transcript_segments:
+        doc_parts += ["", "---", "", "## Timestamped transcript", ""]
+        doc_parts.extend([f"[{seg['timestamp']}] {seg['text']}" for seg in transcript_segments])
     document = "\n".join(doc_parts).strip() + "\n"
 
     # 5. Determine collision-safe destination.
@@ -471,6 +539,8 @@ def ingest_youtube_video(url: str) -> str:
     item_dir = videos_root / slug
     item_dir.mkdir(parents=True, exist_ok=True)
     atomic_write_text(item_dir / "transcript.md", document)
+    if transcript_segments:
+        atomic_write_json(item_dir / "segments.json", transcript_segments)
     log.info("transcript for %s via %s (%d words)", slug, transcript_source, _word_count(transcript_text))
 
     # 6. Build + persist metadata.
