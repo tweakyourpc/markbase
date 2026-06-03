@@ -1,4 +1,4 @@
-![MarkBase hero](docs/markbase.png)
+![MarkBase hero](docs/hero.png)
 
 # MarkBase
 
