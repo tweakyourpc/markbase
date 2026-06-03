@@ -185,6 +185,11 @@
   .markdown pre code { background: transparent; padding: 0; font-size: 13.5px; }
   .markdown table { border-collapse: collapse; width: 100%; font-size: .85em; }
   .markdown th, .markdown td { border: 1px solid var(--border); padding: 6px 10px; }
+  .transcript-gutter { margin: 1em 0; }
+  .transcript-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 14px; align-items: start; margin: 0 0 .65em; }
+  .transcript-time { font-family: var(--font-mono); font-size: .82em; line-height: 1.7; text-align: right; color: var(--text-dim); text-decoration: none; user-select: none; }
+  .transcript-time:hover { color: var(--accent); }
+  .transcript-text { min-width: 0; }
 
   /* ---------------- Right panel ---------------- */
   #right { width: var(--right-w); min-width: var(--right-w); background: var(--bg-elev);
@@ -332,6 +337,15 @@
       <button class="mini-btn" id="clear-completed-btn" onclick="clearCompletedJobs()">Clear finished</button>
     </div>
     <div class="queue-list" id="queue-list"><div style="color:var(--text-dim);font-size:12px">No jobs yet.</div></div>
+  </div>
+
+  <div class="panel">
+    <h3>Settings / Maintenance</h3>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="mini-btn" onclick="reloadLibraryNow()" title="Refresh the web UI from the current library and reopen the selected item. Does not restart the server.">Reload library</button>
+      <button class="mini-btn del" onclick="restartService()" title="Restart the MarkBase backend service to load code changes or recover from a bad state. The page may fail briefly while it comes back.">Restart service</button>
+    </div>
+    <div class="detect-hint" id="maintenance-hint" style="margin-top:10px"></div>
   </div>
 
   <div class="panel" id="meta-panel">
@@ -509,6 +523,60 @@ function fmtDuration(s) {
 }
 function fmtDate(d){ if(!d) return null; try { return new Date(d).toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"}); } catch(e){ return d; } }
 
+function tsToSeconds(ts) {
+  const parts = String(ts).split(":").map(n => parseInt(n, 10) || 0);
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return 0;
+}
+
+function escapeHtml(s) {
+  return esc(s);
+}
+
+function renderYoutubeTimestampGutter(meta, md) {
+  if (!meta || meta.source_type !== "youtube_video" || !meta.source_url) return marked.parse(md || "*No content.*");
+  const lines = String(md || "").split("\n");
+  const out = [];
+  let inTsSection = false;
+  let rows = [];
+
+  function flushRows() {
+    if (!rows.length) return;
+    out.push('<div class="transcript-gutter">' + rows.join("") + '</div>');
+    rows = [];
+  }
+
+  for (const line of lines) {
+    if (line.trim() === '## Timestamped transcript') {
+      flushRows();
+      inTsSection = true;
+      out.push(line);
+      continue;
+    }
+    if (inTsSection) {
+      const m = line.match(/^\[([0-9]{2}:[0-9]{2}(?::[0-9]{2})?)\]\s+(.*)$/);
+      if (m) {
+        const ts = m[1];
+        const bodyHtml = DOMPurify.sanitize(marked.parseInline(m[2] || ""));
+        const href = `${meta.source_url}${meta.source_url.includes('?') ? '&' : '?'}t=${tsToSeconds(ts)}s`;
+        rows.push(`<div class="transcript-row"><a class="transcript-time" href="${escapeHtml(href)}" target="_blank" rel="noopener">${escapeHtml(ts)}</a><div class="transcript-text">${bodyHtml}</div></div>`);
+        continue;
+      }
+      if (!line.trim()) {
+        flushRows();
+        out.push('');
+        continue;
+      }
+      flushRows();
+      inTsSection = false;
+    }
+    out.push(line);
+  }
+  flushRows();
+  return marked.parse(out.join("\n") || "*No content.*");
+}
+
 function renderReader(meta, md) {
   const bits = [];
   if (meta.source_url) bits.push(`<a href="${esc(meta.source_url)}" target="_blank" rel="noopener">source ↗</a>`);
@@ -535,7 +603,7 @@ function renderReader(meta, md) {
       </div>
     </div>
     <div class="markdown" id="md-body"></div>`;
-  $("#md-body").innerHTML = DOMPurify.sanitize(marked.parse(md || "*No content.*"));
+  $("#md-body").innerHTML = DOMPurify.sanitize(renderYoutubeTimestampGutter(meta, md));
   document.querySelectorAll("#md-body pre code").forEach(b => { try { hljs.highlightElement(b); } catch(e){} });
   $("#reader-pane").scrollTop = 0;
 }
@@ -838,6 +906,32 @@ async function clearCompletedJobs() {
     pollQueue();
   } catch (e) {}
 }
+
+function setMaintenanceHint(msg) {
+  const el = $("#maintenance-hint");
+  if (el) el.textContent = msg;
+}
+
+async function reloadLibraryNow() {
+  setMaintenanceHint("Reloading library…");
+  await loadLibrary();
+  if (state.current) await openItem(state.current);
+  setMaintenanceHint("Library reloaded.");
+  setTimeout(() => setMaintenanceHint(""), 2500);
+}
+
+async function restartService() {
+  if (!confirm("Restart MarkBase service now? The page may fail briefly while the service restarts.")) return;
+  try {
+    setMaintenanceHint("Scheduling restart…");
+    const r = await fetch("/api/maintenance/restart", { method: "POST" });
+    if (!r.ok) throw new Error(await r.text());
+    setMaintenanceHint("Restart scheduled. Refresh this page in a few seconds if it does not reconnect automatically.");
+  } catch (e) {
+    setMaintenanceHint("Restart failed: " + e.message);
+  }
+}
+
 function trim(s, n){ s=String(s); return s.length>n ? s.slice(0,n)+"…" : s; }
 
 /* ============================== Search ============================== */

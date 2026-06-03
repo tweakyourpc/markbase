@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -267,6 +268,15 @@ def api_queue() -> JSONResponse:
 @app.post("/api/queue/clear-completed")
 def api_queue_clear_completed() -> JSONResponse:
     return JSONResponse({"cleared": queue_worker.clear_finished_jobs()})
+
+
+@app.post("/api/maintenance/restart")
+def api_maintenance_restart() -> JSONResponse:
+    subprocess.Popen(
+        ["/bin/bash", "-lc", "sleep 1 && systemctl --user restart markbase.service"],
+        start_new_session=True,
+    )
+    return JSONResponse({"ok": True, "message": "Restart scheduled"})
 
 
 # --------------------------------------------------------------------------- #
