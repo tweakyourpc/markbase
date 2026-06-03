@@ -53,8 +53,16 @@ def notes_dir() -> Path:
     return library_path() / "notes"
 
 
+def upload_stage_dir() -> Path:
+    return library_path() / "_uploads"
+
+
 def trash_dir() -> Path:
     return library_path() / "_trash"
+
+
+def settings_file() -> Path:
+    return state_path() / "settings.json"
 
 
 def state_path() -> Path:
@@ -92,6 +100,7 @@ def ensure_dirs() -> None:
     youtube_dir().mkdir(parents=True, exist_ok=True)
     docs_dir().mkdir(parents=True, exist_ok=True)
     notes_dir().mkdir(parents=True, exist_ok=True)
+    upload_stage_dir().mkdir(parents=True, exist_ok=True)
     state_path().mkdir(parents=True, exist_ok=True)
 
 
@@ -128,6 +137,40 @@ def read_json(path: Path, default: Any = None) -> Any:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def default_settings() -> dict[str, Any]:
+    return {
+        "retain_original_uploads_default": False,
+        "retained_originals_purge_mode": "days",
+        "retained_originals_days": 30,
+    }
+
+
+def get_settings() -> dict[str, Any]:
+    ensure_dirs()
+    data = read_json(settings_file(), default={})
+    if not isinstance(data, dict):
+        data = {}
+    settings = {**default_settings(), **data}
+    settings["retain_original_uploads_default"] = bool(settings.get("retain_original_uploads_default"))
+    mode = str(settings.get("retained_originals_purge_mode") or "days").strip().lower()
+    if mode not in {"never", "days"}:
+        mode = "days"
+    settings["retained_originals_purge_mode"] = mode
+    try:
+        days = int(settings.get("retained_originals_days") or 30)
+    except (TypeError, ValueError):
+        days = 30
+    settings["retained_originals_days"] = max(1, days)
+    return settings
+
+
+def save_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    merged = {**default_settings(), **(settings or {})}
+    merged = get_settings() | merged
+    atomic_write_json(settings_file(), merged)
+    return get_settings()
 
 
 # --------------------------------------------------------------------------- #
@@ -414,6 +457,8 @@ def new_metadata(**overrides: Any) -> dict[str, Any]:
         "status": "converted",
         "ai_status": "none",
         "thumbnail_url": None,
+        "original_file_retained": False,
+        "original_filename": None,
     }
     meta.update(overrides)
     return meta
@@ -671,7 +716,12 @@ def ingest_youtube_channel(url_or_handle: str) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-def ingest_file(filepath: str, original_name: str | None = None, source_url: str | None = None) -> str:
+def ingest_file(
+    filepath: str,
+    original_name: str | None = None,
+    source_url: str | None = None,
+    keep_original: bool = False,
+) -> str:
     """
     Convert an uploaded file (or arbitrary URL) into content.md + metadata.json
     under library/docs/<slug>/. Returns the relative item path.
@@ -715,12 +765,21 @@ def ingest_file(filepath: str, original_name: str | None = None, source_url: str
 
     atomic_write_text(item_dir / "content.md", content)
 
+    retained_name = None
+    if keep_original and not source_url:
+        retained_dir = item_dir / "_source"
+        retained_dir.mkdir(parents=True, exist_ok=True)
+        retained_name = original_name or Path(filepath).name or f"source.{ext or 'bin'}"
+        shutil.copy2(filepath, retained_dir / retained_name)
+
     meta = new_metadata(
         id=slug,
         title=title,
         source_url=source_url,
         source_type=source_type,
         word_count=_word_count(content),
+        original_file_retained=bool(retained_name),
+        original_filename=retained_name,
     )
     atomic_write_json(item_dir / "metadata.json", meta)
 
@@ -1009,6 +1068,54 @@ def empty_trash() -> int:
             child.unlink()
         n += 1
     return n
+
+
+def purge_expired_retained_originals() -> int:
+    settings = get_settings()
+    if settings.get("retained_originals_purge_mode") == "never":
+        return 0
+    days = int(settings.get("retained_originals_days") or 30)
+    cutoff = datetime.now(timezone.utc).timestamp() - days * 86400
+    purged = 0
+    for meta_path in iter_metadata_files():
+        item_dir = meta_path.parent
+        source_dir = item_dir / "_source"
+        if not source_dir.is_dir():
+            continue
+        latest_mtime = max((child.stat().st_mtime for child in source_dir.rglob('*') if child.exists()), default=source_dir.stat().st_mtime)
+        if latest_mtime >= cutoff:
+            continue
+        shutil.rmtree(source_dir)
+        meta = read_json(meta_path, default={}) or {}
+        if isinstance(meta, dict):
+            meta = {**new_metadata(), **meta}
+            meta["original_file_retained"] = False
+            meta["original_filename"] = None
+            atomic_write_json(meta_path, meta)
+        purged += 1
+    if purged:
+        update_index()
+        log.info("purged retained originals from %d item(s)", purged)
+    return purged
+
+
+def purge_stale_upload_staging(days: int = 7) -> int:
+    uploads = upload_stage_dir()
+    if not uploads.is_dir():
+        return 0
+    cutoff = datetime.now(timezone.utc).timestamp() - days * 86400
+    purged = 0
+    for child in uploads.iterdir():
+        try:
+            if child.stat().st_mtime < cutoff:
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+                purged += 1
+        except FileNotFoundError:
+            continue
+    return purged
 
 
 def purge_expired_trash(days: int = 30) -> int:

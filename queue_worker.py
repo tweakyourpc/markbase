@@ -51,6 +51,7 @@ def init_db() -> None:
                 type          TEXT NOT NULL,
                 payload       TEXT NOT NULL,          -- url or file path
                 original_name TEXT,
+                keep_original INTEGER NOT NULL DEFAULT 0,
                 status        TEXT NOT NULL DEFAULT 'queued',
                 result_path   TEXT,
                 error_message TEXT,
@@ -59,6 +60,9 @@ def init_db() -> None:
             )
             """
         )
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+        if "keep_original" not in cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN keep_original INTEGER NOT NULL DEFAULT 0")
         # Recover any jobs that were mid-flight on a previous crash.
         conn.execute(
             "UPDATE jobs SET status='queued', updated_at=? WHERE status='processing'",
@@ -75,13 +79,18 @@ def _now() -> str:
 # --------------------------------------------------------------------------- #
 
 
-def add_job(job_type: str, payload: str, original_name: str | None = None) -> int:
+def add_job(
+    job_type: str,
+    payload: str,
+    original_name: str | None = None,
+    keep_original: bool = False,
+) -> int:
     ts = _now()
     with _LOCK, _connect() as conn:
         cur = conn.execute(
-            """INSERT INTO jobs (type, payload, original_name, status, created_at, updated_at)
-               VALUES (?, ?, ?, 'queued', ?, ?)""",
-            (job_type, payload, original_name, ts, ts),
+            """INSERT INTO jobs (type, payload, original_name, keep_original, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'queued', ?, ?)""",
+            (job_type, payload, original_name, int(bool(keep_original)), ts, ts),
         )
         job_id = cur.lastrowid
     log.info("queued job #%s (%s) %s", job_id, job_type, payload)
@@ -162,7 +171,11 @@ def _process(job: dict[str, Any]) -> str | None:
         # Channel jobs don't produce an item themselves; they fan out.
         return f"fanned out {len(urls)} videos"
     if jtype == "file":
-        return ingest.ingest_file(payload, original_name=job.get("original_name"))
+        return ingest.ingest_file(
+            payload,
+            original_name=job.get("original_name"),
+            keep_original=bool(job.get("keep_original")),
+        )
     if jtype == "url":
         return ingest.ingest_file(payload, source_url=payload)
     raise ValueError(f"unknown job type: {jtype}")
@@ -183,6 +196,12 @@ def _worker_loop() -> None:
         except Exception as exc:  # noqa: BLE001 — never let the worker die
             log.exception("job #%s failed", job["id"])
             _set_status(job["id"], "failed", error_message=str(exc))
+        finally:
+            if job.get("type") == "file":
+                try:
+                    Path(str(job.get("payload") or "")).unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 def start_worker() -> None:

@@ -37,6 +37,8 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 def _startup() -> None:
     ingest.ensure_dirs()
     ingest.purge_expired_trash(days=30)  # 30-day retention
+    ingest.purge_stale_upload_staging(days=7)
+    ingest.purge_expired_retained_originals()
     ingest.update_index()
     queue_worker.start_worker()
     log.info("MarkBase ready. Library: %s", ingest.library_path())
@@ -235,16 +237,18 @@ def api_channel(handle: str) -> JSONResponse:
 async def api_ingest(
     url: str | None = Form(default=None),
     file: UploadFile | None = File(default=None),
+    keep_original: str | None = Form(default=None),
 ) -> JSONResponse:
     if file is not None:
         # Persist the upload to a temp location for the worker to convert.
-        uploads = ingest.library_path() / "_uploads"
+        uploads = ingest.upload_stage_dir()
         uploads.mkdir(parents=True, exist_ok=True)
         suffix = Path(file.filename or "upload").suffix
         fd, tmp = tempfile.mkstemp(dir=str(uploads), suffix=suffix)
         with open(fd, "wb") as out:
             shutil.copyfileobj(file.file, out)
-        job_id = queue_worker.add_job("file", tmp, original_name=file.filename)
+        keep_original_bool = str(keep_original or "").strip().lower() in {"1", "true", "yes", "on"}
+        job_id = queue_worker.add_job("file", tmp, original_name=file.filename, keep_original=keep_original_bool)
         return JSONResponse({"job_id": job_id, "type": "file", "name": file.filename})
 
     if url and url.strip():
@@ -277,6 +281,37 @@ def api_maintenance_restart() -> JSONResponse:
         start_new_session=True,
     )
     return JSONResponse({"ok": True, "message": "Restart scheduled"})
+
+
+@app.get("/api/maintenance/settings")
+def api_maintenance_settings() -> JSONResponse:
+    settings = ingest.get_settings()
+    settings["paths"] = {
+        "library": str(ingest.library_path()),
+        "uploads": str(ingest.upload_stage_dir()),
+        "trash": str(ingest.trash_dir()),
+        "state": str(ingest.state_path()),
+    }
+    return JSONResponse(settings)
+
+
+@app.post("/api/maintenance/settings")
+def api_maintenance_settings_save(body: dict[str, Any]) -> JSONResponse:
+    settings = {
+        "retain_original_uploads_default": bool(body.get("retain_original_uploads_default")),
+        "retained_originals_purge_mode": str(body.get("retained_originals_purge_mode") or "days"),
+        "retained_originals_days": int(body.get("retained_originals_days") or 30),
+    }
+    saved = ingest.save_settings(settings)
+    purged = ingest.purge_expired_retained_originals()
+    saved["purged_retained_originals"] = purged
+    saved["paths"] = {
+        "library": str(ingest.library_path()),
+        "uploads": str(ingest.upload_stage_dir()),
+        "trash": str(ingest.trash_dir()),
+        "state": str(ingest.state_path()),
+    }
+    return JSONResponse(saved)
 
 
 # --------------------------------------------------------------------------- #

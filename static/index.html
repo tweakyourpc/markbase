@@ -312,6 +312,10 @@
     <div class="detect-hint" id="detect-hint"></div>
     <label class="file-label" for="file-input" id="file-label">⤴ Upload a file (PDF, docx, …)</label>
     <input id="file-input" type="file" />
+    <label style="display:flex;align-items:center;gap:8px;color:var(--text-dim);font-size:12px;margin:8px 0 10px">
+      <input id="keep-original" type="checkbox" />
+      Keep original file after ingestion
+    </label>
     <button class="btn" id="ingest-btn" onclick="submitIngest()">Submit</button>
   </div>
 
@@ -345,6 +349,25 @@
       <button class="mini-btn" onclick="reloadLibraryNow()" title="Refresh the web UI from the current library and reopen the selected item. Does not restart the server.">Reload library</button>
       <button class="mini-btn del" onclick="restartService()" title="Restart the MarkBase backend service to load code changes or recover from a bad state. The page may fail briefly while it comes back.">Restart service</button>
     </div>
+    <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px">
+      <label style="display:flex;align-items:center;gap:8px;color:var(--text-dim);font-size:12px">
+        <input id="retain-default" type="checkbox" />
+        Keep original uploads by default
+      </label>
+      <div class="field" style="margin-bottom:0">
+        <label style="display:block;color:var(--text-dim);font-size:11px;margin-bottom:4px">Retained originals policy</label>
+        <select id="retention-mode" style="width:100%;padding:8px 10px;background:var(--bg-elev2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);outline:none">
+          <option value="days">Purge after N days</option>
+          <option value="never">Never purge retained originals</option>
+        </select>
+      </div>
+      <div class="field" style="margin-bottom:0">
+        <label style="display:block;color:var(--text-dim);font-size:11px;margin-bottom:4px">Retention days</label>
+        <input id="retention-days" type="number" min="1" step="1" />
+      </div>
+      <button class="mini-btn" onclick="saveMaintenanceSettings()">Save retention settings</button>
+      <div id="path-readout" style="font-size:11px;color:var(--text-dim);line-height:1.5"></div>
+    </div>
     <div class="detect-hint" id="maintenance-hint" style="margin-top:10px"></div>
   </div>
 
@@ -368,6 +391,7 @@ const state = {
   searchTerm: "",
   activeTags: new Set(),
   serverResults: null,  // full-text search results (paths) or null
+  maintenance: null,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -818,6 +842,41 @@ $("#file-input").addEventListener("change", e => {
   $("#file-label").textContent = f ? "📄 " + f.name : "⤴ Upload a file (PDF, docx, …)";
 });
 
+function renderPathReadout(paths) {
+  const el = $("#path-readout");
+  if (!el || !paths) return;
+  el.innerHTML = `
+    <div><strong>Library:</strong> ${esc(paths.library || "")}</div>
+    <div><strong>Uploads:</strong> ${esc(paths.uploads || "")}</div>
+    <div><strong>Trash:</strong> ${esc(paths.trash || "")}</div>
+    <div><strong>State:</strong> ${esc(paths.state || "")}</div>`;
+}
+
+function applyMaintenanceSettings(settings) {
+  state.maintenance = settings || null;
+  $("#retain-default").checked = !!settings.retain_original_uploads_default;
+  $("#retention-mode").value = settings.retained_originals_purge_mode || "days";
+  $("#retention-days").value = settings.retained_originals_days || 30;
+  $("#retention-days").disabled = $("#retention-mode").value === "never";
+  renderPathReadout(settings.paths || null);
+  if (!$("#file-input").files[0]) $("#keep-original").checked = !!settings.retain_original_uploads_default;
+}
+
+async function loadMaintenanceSettings() {
+  try {
+    const r = await fetch("/api/maintenance/settings");
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    applyMaintenanceSettings(data);
+  } catch (e) {
+    setMaintenanceHint("Could not load maintenance settings: " + e.message);
+  }
+}
+
+$("#retention-mode").addEventListener("change", () => {
+  $("#retention-days").disabled = $("#retention-mode").value === "never";
+});
+
 async function submitNote() {
   const btn = $("#note-btn");
   const title = $("#note-title").value.trim();
@@ -854,12 +913,15 @@ async function submitIngest() {
   btn.disabled = true; btn.textContent = "Queuing…";
   try {
     const fd = new FormData();
-    if (file) fd.append("file", file);
-    else fd.append("url", url);
+    if (file) {
+      fd.append("file", file);
+      fd.append("keep_original", $("#keep-original").checked ? "true" : "false");
+    } else fd.append("url", url);
     const r = await fetch("/api/ingest", { method:"POST", body: fd });
     if (!r.ok) throw new Error(await r.text());
     $("#ingest-url").value = ""; $("#detect-hint").textContent = "";
     $("#file-input").value = ""; $("#file-label").textContent = "⤴ Upload a file (PDF, docx, …)";
+    $("#keep-original").checked = !!(state.maintenance && state.maintenance.retain_original_uploads_default);
     pollQueue();
   } catch(e) {
     $("#detect-hint").textContent = "Error: " + e.message;
@@ -929,6 +991,29 @@ async function restartService() {
     setMaintenanceHint("Restart scheduled. Refresh this page in a few seconds if it does not reconnect automatically.");
   } catch (e) {
     setMaintenanceHint("Restart failed: " + e.message);
+  }
+}
+
+async function saveMaintenanceSettings() {
+  try {
+    setMaintenanceHint("Saving retention settings…");
+    const body = {
+      retain_original_uploads_default: $("#retain-default").checked,
+      retained_originals_purge_mode: $("#retention-mode").value,
+      retained_originals_days: parseInt($("#retention-days").value || "30", 10),
+    };
+    const r = await fetch("/api/maintenance/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    applyMaintenanceSettings(data);
+    const purged = data.purged_retained_originals ? ` Purged ${data.purged_retained_originals} expired retained original(s).` : "";
+    setMaintenanceHint("Retention settings saved." + purged);
+  } catch (e) {
+    setMaintenanceHint("Could not save retention settings: " + e.message);
   }
 }
 
