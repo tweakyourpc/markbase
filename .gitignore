@@ -6,11 +6,26 @@ library/
 # Operational state / queue
 jobs.db
 jobs.db-*
+*.db
 *.sqlite
 *.sqlite3
 
 # Local config (also lives in ~/.config/markbase, never in-repo)
+.env
+*.env
+*.local
 markbase.env
+
+# Generated output / scratch
+output/
+public/
+dist/
+build/
+logs/
+*.log
+tmp/
+temp/
+.cache/
 
 # --- Python ---
 .venv/
