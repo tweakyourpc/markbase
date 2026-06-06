@@ -25,6 +25,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from PIL import Image, ImageOps
 
@@ -200,6 +201,82 @@ def unique_slug(base: str, parent: Path) -> str:
         candidate = f"{slug}-{n}"
         n += 1
     return candidate
+
+
+# --------------------------------------------------------------------------- #
+# Source de-duplication
+# --------------------------------------------------------------------------- #
+
+
+_YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
+
+
+def normalize_source_url(url: str | None) -> str:
+    """
+    Canonical form used for source de-duplication.
+
+    Keeps meaningful query parameters, drops common tracking noise, and
+    normalizes YouTube watch/short/youtu.be URLs to their video ID.
+    """
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+
+    parsed = urlparse(raw)
+    if not parsed.scheme:
+        parsed = urlparse(f"https://{raw}")
+
+    scheme = (parsed.scheme or "https").lower()
+    host = (parsed.netloc or "").lower()
+    if host.startswith("www.") and host not in {"www.youtube.com"}:
+        host = host[4:]
+    path = parsed.path or "/"
+
+    if host in _YOUTUBE_HOSTS:
+        video_id = ""
+        if host == "youtu.be":
+            video_id = path.strip("/").split("/", 1)[0]
+        elif path == "/watch":
+            params = dict(parse_qsl(parsed.query, keep_blank_values=False))
+            video_id = params.get("v", "")
+        elif path.startswith("/shorts/"):
+            parts = path.strip("/").split("/")
+            video_id = parts[1] if len(parts) > 1 else ""
+        if video_id:
+            return f"https://www.youtube.com/watch?v={video_id}"
+
+    tracking_prefixes = ("utm_",)
+    drop_params = {
+        "fbclid",
+        "gclid",
+        "igshid",
+        "mc_cid",
+        "mc_eid",
+        "msclkid",
+    }
+    params = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key.lower() not in drop_params and not key.lower().startswith(tracking_prefixes)
+    ]
+    query = urlencode(sorted(params), doseq=True)
+    path = re.sub(r"/{2,}", "/", path).rstrip("/") or "/"
+    return urlunparse((scheme, host, path, "", query, ""))
+
+
+def find_existing_by_source_url(source_url: str | None) -> str | None:
+    """Return the first library-relative item path for a matching source URL."""
+    wanted = normalize_source_url(source_url)
+    if not wanted:
+        return None
+    root = library_path()
+    for meta_path in iter_metadata_files():
+        meta = read_json(meta_path, default={})
+        if not isinstance(meta, dict):
+            continue
+        if normalize_source_url(meta.get("source_url")) == wanted:
+            return meta_path.parent.relative_to(root).as_posix()
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -550,6 +627,11 @@ def ingest_youtube_video(url: str) -> str:
     """
     ensure_dirs()
 
+    existing = find_existing_by_source_url(url)
+    if existing:
+        log.info("youtube source already ingested -> %s", existing)
+        return existing
+
     # 1. Pull structured metadata via yt-dlp (preferred, but optional).
     info: dict[str, Any] = {}
     try:
@@ -727,6 +809,12 @@ def ingest_file(
     under library/docs/<slug>/. Returns the relative item path.
     """
     ensure_dirs()
+
+    if source_url:
+        existing = find_existing_by_source_url(source_url)
+        if existing:
+            log.info("source URL already ingested -> %s", existing)
+            return existing
 
     source = source_url or filepath
     name = original_name or Path(filepath).name or source

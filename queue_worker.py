@@ -79,6 +79,26 @@ def _now() -> str:
 # --------------------------------------------------------------------------- #
 
 
+def _dedupe_key(job_type: str, payload: str) -> str | None:
+    if job_type not in {"url", "youtube_video"}:
+        return None
+    return ingest.normalize_source_url(payload)
+
+
+def _find_active_duplicate(conn: sqlite3.Connection, job_type: str, payload: str) -> int | None:
+    key = _dedupe_key(job_type, payload)
+    if not key:
+        return None
+    rows = conn.execute(
+        "SELECT id, payload FROM jobs WHERE type=? AND status IN ('queued', 'processing') ORDER BY id ASC",
+        (job_type,),
+    ).fetchall()
+    for row in rows:
+        if ingest.normalize_source_url(row["payload"]) == key:
+            return int(row["id"])
+    return None
+
+
 def add_job(
     job_type: str,
     payload: str,
@@ -86,7 +106,26 @@ def add_job(
     keep_original: bool = False,
 ) -> int:
     ts = _now()
+    existing_result = None
+    if job_type in {"url", "youtube_video"}:
+        existing_result = ingest.find_existing_by_source_url(payload)
+
     with _LOCK, _connect() as conn:
+        duplicate_id = _find_active_duplicate(conn, job_type, payload)
+        if duplicate_id is not None:
+            log.info("duplicate active job #%s reused for (%s) %s", duplicate_id, job_type, payload)
+            return duplicate_id
+
+        if existing_result:
+            cur = conn.execute(
+                """INSERT INTO jobs (type, payload, original_name, keep_original, status, result_path, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, 'done', ?, ?, ?)""",
+                (job_type, payload, original_name, int(bool(keep_original)), existing_result, ts, ts),
+            )
+            job_id = cur.lastrowid
+            log.info("source already ingested; recorded job #%s done -> %s", job_id, existing_result)
+            return int(job_id)
+
         cur = conn.execute(
             """INSERT INTO jobs (type, payload, original_name, keep_original, status, created_at, updated_at)
                VALUES (?, ?, ?, ?, 'queued', ?, ?)""",

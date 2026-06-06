@@ -32,6 +32,7 @@ build step, no React.
 - YouTube timestamps in search results, jump straight to the exact moment in a video.
 - Upload files for conversion to Markdown.
 - SQLite-backed background job queue with live status (and visible failures).
+- Source URL de-duplication prevents repeat web page and YouTube ingests from creating duplicate items.
 - Soft delete with 30-day trash and one-click restore.
 - Markdown rendered with `marked.js`, sanitized with `DOMPurify`, and highlighted with `highlight.js`.
 - Client-side metadata filtering + server-side full-text search.
@@ -160,6 +161,10 @@ whatever it finds, so you can drop in an existing library and it just works.
   (e.g. a channel with no remaining videos) are pruned automatically.
 - **Deterministic, collision-safe slugs.** Titles → `lowercase-hyphenated`;
   collisions get `-2`, `-3`, … suffixes based on existing folders.
+- **Source URL de-duplication.** Repeat web page and YouTube submissions are
+  matched by normalized source URL. Active duplicate jobs are reused, and
+  already-ingested sources return the existing item path instead of converting
+  again.
 - **Graceful failures.** Jobs that fail are marked `failed` with the error
   message stored and shown in the UI; the worker never dies.
 - **Single-threaded worker** processes one job at a time; channel ingestion
