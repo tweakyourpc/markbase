@@ -32,7 +32,7 @@ build step, no React.
 - YouTube timestamps in search results, jump straight to the exact moment in a video.
 - Upload files for conversion to Markdown.
 - SQLite-backed background job queue with live status (and visible failures).
-- Source URL de-duplication prevents repeat web page and YouTube ingests from creating duplicate items.
+- Source URL de-duplication prevents repeat web page and YouTube ingests from creating duplicate items. See [dedupe details](docs/dedupe.md).
 - Soft delete with 30-day trash and one-click restore.
 - Markdown rendered with `marked.js`, sanitized with `DOMPurify`, and highlighted with `highlight.js`.
 - Client-side metadata filtering + server-side full-text search.
