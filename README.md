@@ -19,9 +19,11 @@ build step, no React.
 
 ---
 
-## MCP Companion
+## Companions
 
 [markbase-mcp](https://github.com/tweakyourpc/markbase-mcp) exposes your entire MarkBase library as a live MCP server that Claude Code, Codex CLI, and Gemini CLI can all connect to simultaneously. One library, one MCP server, every AI coding tool shares the same brain.
+
+[markbase-hugo](https://github.com/tweakyourpc/markbase-hugo) publishes your MarkBase library as a fast, browsable static wiki using Hugo. Runs on a schedule and rebuilds automatically when your library changes. No AI required at publish time.
 
 ---
 
@@ -70,35 +72,25 @@ To change the location later, edit `~/.config/markbase/markbase.env` (or re-run
 
 The quickest way to run MarkBase without installing dependencies manually.
 
-### Using Docker Compose (recommended)
-
-```bash
+**Using Docker Compose (recommended):**
 git clone https://github.com/tweakyourpc/markbase && cd markbase
 docker compose up -d
-```
 
-MarkBase will be available at `http://localhost:8733`.
-Your library is stored in `./library` and persists across restarts.
+MarkBase will be available at http://localhost:8733. Your library is stored in ./library and persists across restarts.
 
-### Using Docker directly
-
-```bash
+**Using Docker directly:**
 docker run -d \
   -p 8733:8733 \
   -v $(pwd)/library:/data/library \
   -v $(pwd)/state:/data/state \
   --name markbase \
   ghcr.io/tweakyourpc/markbase:latest
-```
 
-### Updating
-
-```bash
+**Updating:**
 docker compose pull
 docker compose up -d
-```
 
-See `docs/docker.md` for port changes, custom library locations, logs, restarts, and shutdown.
+See docs/docker.md for more detail on ports, volumes, and logs.
 
 ---
 
