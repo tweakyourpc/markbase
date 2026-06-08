@@ -16,8 +16,9 @@ docker compose up -d
 ```bash
 docker run -d \
   -p 8733:8733 \
-  -v $(pwd)/library:/data/library \
-  -v $(pwd)/state:/data/state \
+  # Use $(pwd) on Linux/macOS, %cd% on Windows CMD, or ${PWD} on PowerShell for full host paths.
+  -v ./library:/data/library \
+  -v ./state:/data/state \
   --name markbase \
   ghcr.io/tweakyourpc/markbase:latest
 ```
