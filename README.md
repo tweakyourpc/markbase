@@ -72,6 +72,8 @@ To change the location later, edit `~/.config/markbase/markbase.env` (or re-run
 
 The quickest way to run MarkBase without installing dependencies manually.
 
+Requires Docker Desktop on macOS/Windows or Docker Engine on Linux. Install it from https://docs.docker.com/get-docker/ before running these commands.
+
 **Using Docker Compose (recommended):**
 ```bash
 git clone https://github.com/tweakyourpc/markbase && cd markbase
