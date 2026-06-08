@@ -1,0 +1,14 @@
+services:
+  markbase:
+    build: .
+    ports:
+      - "8733:8733"
+    volumes:
+      - ./library:/data/library
+      - ./state:/data/state
+    environment:
+      - MARKBASE_LIBRARY_PATH=/data/library
+      - MARKBASE_STATE_PATH=/data/state
+      - MARKBASE_HOST=0.0.0.0
+      - MARKBASE_PORT=8733
+    restart: unless-stopped

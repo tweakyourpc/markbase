@@ -66,6 +66,42 @@ To change the location later, edit `~/.config/markbase/markbase.env` (or re-run
 
 ---
 
+## Docker
+
+The quickest way to run MarkBase without installing dependencies manually.
+
+### Using Docker Compose (recommended)
+
+```bash
+git clone https://github.com/tweakyourpc/markbase && cd markbase
+docker compose up -d
+```
+
+MarkBase will be available at `http://localhost:8733`.
+Your library is stored in `./library` and persists across restarts.
+
+### Using Docker directly
+
+```bash
+docker run -d \
+  -p 8733:8733 \
+  -v $(pwd)/library:/data/library \
+  -v $(pwd)/state:/data/state \
+  --name markbase \
+  ghcr.io/tweakyourpc/markbase:latest
+```
+
+### Updating
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+See `docs/docker.md` for port changes, custom library locations, logs, restarts, and shutdown.
+
+---
+
 ## Run (without the service)
 
 For local development you can run it directly. `start.sh` reads the same
