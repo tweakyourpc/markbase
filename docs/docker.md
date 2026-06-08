@@ -74,3 +74,19 @@ docker compose down
 - `library` and `state` are mounted as volumes so content and queue state survive rebuilds and container replacement.
 - No `portbroker` is used inside the container. Uvicorn binds directly to `0.0.0.0:8733`.
 - A clean empty `library` directory works. MarkBase creates its required structure on startup.
+
+## Platform notes
+
+**Mac and Linux:** `docker compose up -d` works as-is from any terminal.
+
+**Windows (PowerShell):**
+
+```powershell
+docker compose up -d
+```
+
+Works as-is. Docker Desktop for Windows handles path translation automatically.
+
+**Windows (CMD):** Same as PowerShell, `docker compose up -d` works without changes.
+
+**Note for `docker run` users:** The README uses `$(pwd)` for volume paths. On Windows CMD use `%cd%` instead, and on PowerShell use `${PWD}`. Docker Compose with relative paths is recommended over `docker run` for this reason.
