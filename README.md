@@ -48,7 +48,7 @@ Requires **Python 3.10+**. `markitdown` needs `ffmpeg` available on your PATH
 for some media formats.
 
 ```bash
-git clone  markbase && cd markbase
+git clone https://github.com/tweakyourpc/markbase && cd markbase
 ./install.sh
 ```
 
@@ -73,22 +73,28 @@ To change the location later, edit `~/.config/markbase/markbase.env` (or re-run
 The quickest way to run MarkBase without installing dependencies manually.
 
 **Using Docker Compose (recommended):**
+```bash
 git clone https://github.com/tweakyourpc/markbase && cd markbase
 docker compose up -d
+```
 
 MarkBase will be available at http://localhost:8733. Your library is stored in ./library and persists across restarts.
 
 **Using Docker directly:**
+```bash
 docker run -d \
   -p 8733:8733 \
   -v $(pwd)/library:/data/library \
   -v $(pwd)/state:/data/state \
   --name markbase \
   ghcr.io/tweakyourpc/markbase:latest
+```
 
 **Updating:**
+```bash
 docker compose pull
 docker compose up -d
+```
 
 See docs/docker.md for more detail on ports, volumes, and logs.
 
@@ -112,24 +118,26 @@ PORT=$(portbroker alloc --name markbase-raw --host 0.0.0.0) \
 ## The library folder
 
 All content lives under a single library directory:
+```text
 library/
-index.json                 # master index (rebuilt from scratch on each change)
-jobs.db                    # SQLite job queue
-youtube/
-@channelname/
-channel.json
-videos/
-video-slug/
-transcript.md
-metadata.json
-docs/
-item-slug/
-content.md
-metadata.json
-notes/
-note-slug/
-content.md
-metadata.json
+  index.json                 # master index (rebuilt from scratch on each change)
+  jobs.db                    # SQLite job queue
+  youtube/
+    @channelname/
+      channel.json
+      videos/
+        video-slug/
+          transcript.md
+          metadata.json
+  docs/
+    item-slug/
+      content.md
+      metadata.json
+  notes/
+    note-slug/
+      content.md
+      metadata.json
+```
 
 The library lives **outside this code folder**. Its location is chosen by the
 installer and stored in `~/.config/markbase/markbase.env`; at runtime it is read
