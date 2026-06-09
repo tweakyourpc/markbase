@@ -382,6 +382,34 @@ def _format_timestamp(seconds: float) -> str:
     return f"{minutes:02}:{secs:02}"
 
 
+def _canonical_caption_word(word: str) -> str:
+    return re.sub(r"[\W_]+", "", word, flags=re.UNICODE).lower()
+
+
+def _trim_rolling_caption_overlap(previous: str, current: str) -> str:
+    """
+    YouTube auto-captions often use rolling cues:
+
+        "this is the first line"
+        "first line and the next line"
+
+    Joining those verbatim repeats phrases and sometimes whole sentences. Keep
+    only the non-overlapping suffix from the current cue.
+    """
+    previous_words = previous.split()
+    current_words = current.split()
+    if not previous_words or not current_words:
+        return current
+
+    previous_key = [_canonical_caption_word(word) for word in previous_words]
+    current_key = [_canonical_caption_word(word) for word in current_words]
+    max_overlap = min(len(previous_key), len(current_key))
+    for size in range(max_overlap, 0, -1):
+        if previous_key[-size:] == current_key[:size]:
+            return " ".join(current_words[size:]).strip()
+    return current
+
+
 def _vtt_to_segments(vtt: str) -> list[dict[str, Any]]:
     """Convert WebVTT into cleaned transcript segments with timestamps."""
     segments: list[dict[str, Any]] = []
@@ -405,7 +433,11 @@ def _vtt_to_segments(vtt: str) -> list[dict[str, Any]]:
             current_end = None
             current_lines = []
             return
-        if segments and (text == segments[-1]["text"] or text in segments[-1]["text"]):
+        if segments:
+            text = _trim_rolling_caption_overlap(segments[-1]["text"], text)
+        if not text or (
+            segments and (text == segments[-1]["text"] or text in segments[-1]["text"])
+        ):
             current_start = None
             current_end = None
             current_lines = []

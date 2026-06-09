@@ -93,5 +93,31 @@ class DedupeTests(unittest.TestCase):
         self.assertEqual(jobs[0]["result_path"], rel)
 
 
+class TranscriptVttTests(unittest.TestCase):
+    def test_vtt_parser_collapses_rolling_youtube_caption_overlap(self):
+        vtt = """WEBVTT
+
+00:00:00.000 --> 00:00:01.000
+I think this is
+
+00:00:01.000 --> 00:00:02.000
+this is important
+
+00:00:02.000 --> 00:00:03.000
+important because it matters.
+"""
+
+        segments = ingest._vtt_to_segments(vtt)
+
+        self.assertEqual(
+            [segment["text"] for segment in segments],
+            ["I think this is", "important", "because it matters."],
+        )
+        self.assertEqual(
+            ingest._segments_to_text(segments),
+            "I think this is important because it matters.",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
