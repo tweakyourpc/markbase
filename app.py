@@ -24,7 +24,9 @@ from fastapi.responses import FileResponse, JSONResponse
 import ingest
 import queue_worker
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+)
 log = logging.getLogger("markbase.app")
 
 app = FastAPI(title="MarkBase", version="1.0.0")
@@ -78,7 +80,9 @@ def _read_content_md(item_dir: Path) -> str:
     return f.read_text(encoding="utf-8") if f else ""
 
 
-def _ensure_editable_markdown(item_dir: Path, metadata: dict[str, Any]) -> tuple[Path, str]:
+def _ensure_editable_markdown(
+    item_dir: Path, metadata: dict[str, Any]
+) -> tuple[Path, str]:
     existing = _content_file(item_dir)
     title = metadata.get("title") or "Untitled"
     source_text = existing.read_text(encoding="utf-8") if existing else ""
@@ -101,8 +105,12 @@ def _ensure_editable_markdown(item_dir: Path, metadata: dict[str, Any]) -> tuple
     return content_path, structured
 
 
-YT_VIDEO_RE = re.compile(r"(youtube\.com/watch\?|youtu\.be/|youtube\.com/shorts/)", re.I)
-YT_CHANNEL_RE = re.compile(r"youtube\.com/(@[\w.-]+|channel/|c/|user/|playlist\?)", re.I)
+YT_VIDEO_RE = re.compile(
+    r"(youtube\.com/watch\?|youtu\.be/|youtube\.com/shorts/)", re.I
+)
+YT_CHANNEL_RE = re.compile(
+    r"youtube\.com/(@[\w.-]+|channel/|c/|user/|playlist\?)", re.I
+)
 
 
 def detect_source_type(value: str) -> str:
@@ -137,7 +145,9 @@ def whoami() -> JSONResponse:
             "pid": os.getpid(),
             "startedAt": STARTED_AT,
             "host": os.environ.get("MARKBASE_HOST", "0.0.0.0"),
-            "port": int(os.environ["MARKBASE_PORT"]) if os.environ.get("MARKBASE_PORT") else None,
+            "port": int(os.environ["MARKBASE_PORT"])
+            if os.environ.get("MARKBASE_PORT")
+            else None,
         }
     )
 
@@ -214,7 +224,9 @@ def api_channel(handle: str) -> JSONResponse:
     if not channel_root.is_dir():
         raise HTTPException(status_code=404, detail="Channel not found")
 
-    channel_meta = ingest.read_json(channel_root / "channel.json", default={"handle": handle})
+    channel_meta = ingest.read_json(
+        channel_root / "channel.json", default={"handle": handle}
+    )
     videos: list[dict[str, Any]] = []
     videos_root = channel_root / "videos"
     if videos_root.is_dir():
@@ -222,9 +234,14 @@ def api_channel(handle: str) -> JSONResponse:
             m = ingest.read_json(meta_path)
             if isinstance(m, dict):
                 m = {**ingest.new_metadata(), **m}
-                m["path"] = meta_path.parent.relative_to(ingest.library_path()).as_posix()
+                m["path"] = meta_path.parent.relative_to(
+                    ingest.library_path()
+                ).as_posix()
                 videos.append(m)
-    videos.sort(key=lambda m: m.get("date_published") or m.get("date_ingested") or "", reverse=True)
+    videos.sort(
+        key=lambda m: m.get("date_published") or m.get("date_ingested") or "",
+        reverse=True,
+    )
     return JSONResponse({"channel": channel_meta, "videos": videos})
 
 
@@ -238,17 +255,32 @@ async def api_ingest(
     url: str | None = Form(default=None),
     file: UploadFile | None = File(default=None),
     keep_original: str | None = Form(default=None),
+    title: str | None = Form(default=None),
+    notes: str | None = Form(default=None),
 ) -> JSONResponse:
+    user_title = (title or "").strip() or None
+    user_notes = (notes or "").strip() or None
     if file is not None:
-        # Persist the upload to a temp location for the worker to convert.
         uploads = ingest.upload_stage_dir()
         uploads.mkdir(parents=True, exist_ok=True)
         suffix = Path(file.filename or "upload").suffix
         fd, tmp = tempfile.mkstemp(dir=str(uploads), suffix=suffix)
         with open(fd, "wb") as out:
             shutil.copyfileobj(file.file, out)
-        keep_original_bool = str(keep_original or "").strip().lower() in {"1", "true", "yes", "on"}
-        job_id = queue_worker.add_job("file", tmp, original_name=file.filename, keep_original=keep_original_bool)
+        keep_original_bool = str(keep_original or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        job_id = queue_worker.add_job(
+            "file",
+            tmp,
+            original_name=file.filename,
+            keep_original=keep_original_bool,
+            user_title=user_title,
+            user_notes=user_notes,
+        )
         return JSONResponse({"job_id": job_id, "type": "file", "name": file.filename})
 
     if url and url.strip():
@@ -258,7 +290,12 @@ async def api_ingest(
             "youtube_channel": "youtube_channel",
             "url": "url",
         }[stype]
-        job_id = queue_worker.add_job(job_type, url.strip())
+        job_id = queue_worker.add_job(
+            job_type,
+            url.strip(),
+            user_title=user_title,
+            user_notes=user_notes,
+        )
         return JSONResponse({"job_id": job_id, "type": job_type, "url": url.strip()})
 
     raise HTTPException(status_code=400, detail="Provide a 'url' or a 'file'.")
@@ -298,8 +335,12 @@ def api_maintenance_settings() -> JSONResponse:
 @app.post("/api/maintenance/settings")
 def api_maintenance_settings_save(body: dict[str, Any]) -> JSONResponse:
     settings = {
-        "retain_original_uploads_default": bool(body.get("retain_original_uploads_default")),
-        "retained_originals_purge_mode": str(body.get("retained_originals_purge_mode") or "days"),
+        "retain_original_uploads_default": bool(
+            body.get("retain_original_uploads_default")
+        ),
+        "retained_originals_purge_mode": str(
+            body.get("retained_originals_purge_mode") or "days"
+        ),
         "retained_originals_days": int(body.get("retained_originals_days") or 30),
     }
     saved = ingest.save_settings(settings)
@@ -328,11 +369,15 @@ def api_note(body: dict[str, Any]) -> JSONResponse:
     tags = body.get("tags") or []
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",")]
+    user_notes = (str(body.get("notes") or "").strip()) or None
     path = ingest.save_note(
         title=title,
         content=content,
         tags=list(tags),
-        source_url=(str(body.get("source_url")).strip() or None) if body.get("source_url") else None,
+        source_url=(str(body.get("source_url")).strip() or None)
+        if body.get("source_url")
+        else None,
+        user_notes=user_notes,
     )
     return JSONResponse({"path": path, "title": title or "Untitled Note"})
 
@@ -369,7 +414,9 @@ def api_search(q: str = "") -> JSONResponse:
         idx = body.find(q)
         if idx >= 0:
             start = max(0, idx - 60)
-            snippet = ("…" if start else "") + body[start : idx + 120].replace("\n", " ")
+            snippet = ("…" if start else "") + body[start : idx + 120].replace(
+                "\n", " "
+            )
 
         if in_meta or idx >= 0:
             results.append({**meta, "snippet": snippet})

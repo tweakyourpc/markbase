@@ -62,7 +62,13 @@ def init_db() -> None:
         )
         cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
         if "keep_original" not in cols:
-            conn.execute("ALTER TABLE jobs ADD COLUMN keep_original INTEGER NOT NULL DEFAULT 0")
+            conn.execute(
+                "ALTER TABLE jobs ADD COLUMN keep_original INTEGER NOT NULL DEFAULT 0"
+            )
+        if "user_title" not in cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN user_title TEXT")
+        if "user_notes" not in cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN user_notes TEXT")
         # Recover any jobs that were mid-flight on a previous crash.
         conn.execute(
             "UPDATE jobs SET status='queued', updated_at=? WHERE status='processing'",
@@ -85,7 +91,9 @@ def _dedupe_key(job_type: str, payload: str) -> str | None:
     return ingest.normalize_source_url(payload)
 
 
-def _find_active_duplicate(conn: sqlite3.Connection, job_type: str, payload: str) -> int | None:
+def _find_active_duplicate(
+    conn: sqlite3.Connection, job_type: str, payload: str
+) -> int | None:
     key = _dedupe_key(job_type, payload)
     if not key:
         return None
@@ -104,6 +112,8 @@ def add_job(
     payload: str,
     original_name: str | None = None,
     keep_original: bool = False,
+    user_title: str | None = None,
+    user_notes: str | None = None,
 ) -> int:
     ts = _now()
     existing_result = None
@@ -113,23 +123,51 @@ def add_job(
     with _LOCK, _connect() as conn:
         duplicate_id = _find_active_duplicate(conn, job_type, payload)
         if duplicate_id is not None:
-            log.info("duplicate active job #%s reused for (%s) %s", duplicate_id, job_type, payload)
+            log.info(
+                "duplicate active job #%s reused for (%s) %s",
+                duplicate_id,
+                job_type,
+                payload,
+            )
             return duplicate_id
 
         if existing_result:
             cur = conn.execute(
-                """INSERT INTO jobs (type, payload, original_name, keep_original, status, result_path, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, 'done', ?, ?, ?)""",
-                (job_type, payload, original_name, int(bool(keep_original)), existing_result, ts, ts),
+                """INSERT INTO jobs (type, payload, original_name, keep_original, user_title, user_notes, status, result_path, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 'done', ?, ?, ?)""",
+                (
+                    job_type,
+                    payload,
+                    original_name,
+                    int(bool(keep_original)),
+                    user_title,
+                    user_notes,
+                    existing_result,
+                    ts,
+                    ts,
+                ),
             )
             job_id = cur.lastrowid
-            log.info("source already ingested; recorded job #%s done -> %s", job_id, existing_result)
+            log.info(
+                "source already ingested; recorded job #%s done -> %s",
+                job_id,
+                existing_result,
+            )
             return int(job_id)
 
         cur = conn.execute(
-            """INSERT INTO jobs (type, payload, original_name, keep_original, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, 'queued', ?, ?)""",
-            (job_type, payload, original_name, int(bool(keep_original)), ts, ts),
+            """INSERT INTO jobs (type, payload, original_name, keep_original, user_title, user_notes, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)""",
+            (
+                job_type,
+                payload,
+                original_name,
+                int(bool(keep_original)),
+                user_title,
+                user_notes,
+                ts,
+                ts,
+            ),
         )
         job_id = cur.lastrowid
     log.info("queued job #%s (%s) %s", job_id, job_type, payload)
@@ -152,7 +190,9 @@ def queue_status() -> dict[str, Any]:
     jobs = get_jobs(limit=50)
     counts: dict[str, int] = {"queued": 0, "processing": 0, "done": 0, "failed": 0}
     with _LOCK, _connect() as conn:
-        rows = conn.execute("SELECT status, COUNT(*) AS n FROM jobs GROUP BY status").fetchall()
+        rows = conn.execute(
+            "SELECT status, COUNT(*) AS n FROM jobs GROUP BY status"
+        ).fetchall()
     for row in rows:
         counts[row["status"]] = int(row["n"])
     return {"counts": counts, "jobs": jobs}
@@ -203,20 +243,32 @@ def _claim_next() -> dict[str, Any] | None:
 def _process(job: dict[str, Any]) -> str | None:
     jtype = job["type"]
     payload = job["payload"]
+    user_title = job.get("user_title")
+    user_notes = job.get("user_notes")
     if jtype == "youtube_video":
-        return ingest.ingest_youtube_video(payload)
+        return ingest.ingest_youtube_video(
+            payload,
+            user_title=user_title,
+            user_notes=user_notes,
+        )
     if jtype == "youtube_channel":
         urls = ingest.ingest_youtube_channel(payload)
-        # Channel jobs don't produce an item themselves; they fan out.
         return f"fanned out {len(urls)} videos"
     if jtype == "file":
         return ingest.ingest_file(
             payload,
             original_name=job.get("original_name"),
             keep_original=bool(job.get("keep_original")),
+            user_title=user_title,
+            user_notes=user_notes,
         )
     if jtype == "url":
-        return ingest.ingest_file(payload, source_url=payload)
+        return ingest.ingest_file(
+            payload,
+            source_url=payload,
+            user_title=user_title,
+            user_notes=user_notes,
+        )
     raise ValueError(f"unknown job type: {jtype}")
 
 
