@@ -429,6 +429,16 @@ def api_search(q: str = "") -> JSONResponse:
 # --------------------------------------------------------------------------- #
 
 
+def _replace_h1(text: str, new_title: str) -> str:
+    """Replace the first level-1 heading in text with the given title."""
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("# ") and not line.startswith("## "):
+            lines[i] = f"# {new_title}"
+            break
+    return "\n".join(lines)
+
+
 @app.post("/api/item/{path:path}/edit")
 def api_edit_item(path: str, body: dict[str, Any]) -> JSONResponse:
     item_dir = _safe_item_dir(path)
@@ -436,12 +446,26 @@ def api_edit_item(path: str, body: dict[str, Any]) -> JSONResponse:
     if not isinstance(meta, dict):
         raise HTTPException(status_code=404, detail="Item metadata not found")
     meta = {**ingest.new_metadata(), **meta}
-    content = str(body.get("markdown") or "")
-    if not content.strip():
-        raise HTTPException(status_code=400, detail="Edited markdown cannot be empty")
-    content_path, _ = _ensure_editable_markdown(item_dir, meta)
-    ingest.atomic_write_text(content_path, content)
-    meta["word_count"] = len(content.split())
+
+    new_title = str(body.get("title") or "").strip() or None
+    content = str(body.get("markdown") or "").strip()
+    if not new_title and not content:
+        raise HTTPException(
+            status_code=400, detail="Provide at least one of 'title' or 'markdown'."
+        )
+
+    content_path, existing_content = _ensure_editable_markdown(item_dir, meta)
+
+    # If a new title was given, update metadata and the H1 in content.
+    if new_title:
+        meta["title"] = new_title
+        existing_content = _replace_h1(existing_content, new_title)
+
+    # If new markdown was given, use it; otherwise use the (possibly
+    # title-updated) existing content so the H1 stays in sync.
+    updated_content = content if content else existing_content
+    ingest.atomic_write_text(content_path, updated_content)
+    meta["word_count"] = len(updated_content.split())
     ingest.atomic_write_json(item_dir / "metadata.json", meta)
     ingest.update_index()
     return JSONResponse({"path": path, "saved": True, "editable": content_path.name})
