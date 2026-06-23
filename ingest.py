@@ -154,7 +154,9 @@ def get_settings() -> dict[str, Any]:
     if not isinstance(data, dict):
         data = {}
     settings = {**default_settings(), **data}
-    settings["retain_original_uploads_default"] = bool(settings.get("retain_original_uploads_default"))
+    settings["retain_original_uploads_default"] = bool(
+        settings.get("retain_original_uploads_default")
+    )
     mode = str(settings.get("retained_originals_purge_mode") or "days").strip().lower()
     if mode not in {"never", "days"}:
         mode = "days"
@@ -257,7 +259,8 @@ def normalize_source_url(url: str | None) -> str:
     params = [
         (key, value)
         for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-        if key.lower() not in drop_params and not key.lower().startswith(tracking_prefixes)
+        if key.lower() not in drop_params
+        and not key.lower().startswith(tracking_prefixes)
     ]
     query = urlencode(sorted(params), doseq=True)
     path = re.sub(r"/{2,}", "/", path).rstrip("/") or "/"
@@ -318,8 +321,8 @@ def _preprocess_for_ocr(source: str) -> str:
     if max(gray.size) < 1800:
         scale = 1800 / max(gray.size)
         gray = gray.resize((int(gray.size[0] * scale), int(gray.size[1] * scale)))
-    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-        gray.save(tmp.name, format='PNG')
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        gray.save(tmp.name, format="PNG")
         return tmp.name
 
 
@@ -327,14 +330,14 @@ def run_tesseract_ocr(source: str) -> str:
     """Run Tesseract OCR on an image and return extracted text."""
     prepared = _preprocess_for_ocr(source)
     try:
-        proc = _run(['tesseract', prepared, 'stdout', '--psm', '3'])
+        proc = _run(["tesseract", prepared, "stdout", "--psm", "3"])
         if proc.returncode != 0:
             raise RuntimeError(
                 f"tesseract failed (exit {proc.returncode}): {proc.stderr.strip() or proc.stdout.strip()}"
             )
         text = proc.stdout.strip()
         if not text:
-            raise RuntimeError('tesseract produced no OCR text')
+            raise RuntimeError("tesseract produced no OCR text")
         return text
     finally:
         Path(prepared).unlink(missing_ok=True)
@@ -382,6 +385,34 @@ def _format_timestamp(seconds: float) -> str:
     return f"{minutes:02}:{secs:02}"
 
 
+def _canonical_caption_word(word: str) -> str:
+    return re.sub(r"[\W_]+", "", word, flags=re.UNICODE).lower()
+
+
+def _trim_rolling_caption_overlap(previous: str, current: str) -> str:
+    """
+    YouTube auto-captions often use rolling cues:
+
+        "this is the first line"
+        "first line and the next line"
+
+    Joining those verbatim repeats phrases and sometimes whole sentences. Keep
+    only the non-overlapping suffix from the current cue.
+    """
+    previous_words = previous.split()
+    current_words = current.split()
+    if not previous_words or not current_words:
+        return current
+
+    previous_key = [_canonical_caption_word(word) for word in previous_words]
+    current_key = [_canonical_caption_word(word) for word in current_words]
+    max_overlap = min(len(previous_key), len(current_key))
+    for size in range(max_overlap, 0, -1):
+        if previous_key[-size:] == current_key[:size]:
+            return " ".join(current_words[size:]).strip()
+    return current
+
+
 def _vtt_to_segments(vtt: str) -> list[dict[str, Any]]:
     """Convert WebVTT into cleaned transcript segments with timestamps."""
     segments: list[dict[str, Any]] = []
@@ -405,7 +436,11 @@ def _vtt_to_segments(vtt: str) -> list[dict[str, Any]]:
             current_end = None
             current_lines = []
             return
-        if segments and (text == segments[-1]["text"] or text in segments[-1]["text"]):
+        if segments:
+            text = _trim_rolling_caption_overlap(segments[-1]["text"], text)
+        if not text or (
+            segments and (text == segments[-1]["text"] or text in segments[-1]["text"])
+        ):
             current_start = None
             current_end = None
             current_lines = []
@@ -477,15 +512,31 @@ def fetch_transcript_via_ytdlp(url: str) -> tuple[str, list[dict[str, Any]]] | N
             flag = "--write-auto-subs" if auto else "--write-subs"
             proc = _run(
                 [
-                    "yt-dlp", "--no-warnings", "--skip-download", flag,
-                    "--sub-langs", langs, "--sub-format", "vtt",
-                    "-o", out_tmpl, url,
+                    "yt-dlp",
+                    "--no-warnings",
+                    "--skip-download",
+                    flag,
+                    "--sub-langs",
+                    langs,
+                    "--sub-format",
+                    "vtt",
+                    "-o",
+                    out_tmpl,
+                    url,
                 ]
             )
             if proc.returncode != 0:
-                log.warning("yt-dlp subtitle fetch failed (auto=%s): %s", auto, proc.stderr.strip()[:200])
-            vtts = sorted(Path(tmp).glob("*.vtt"), key=lambda p: p.stat().st_size, reverse=True)
-            return vtts[0].read_text(encoding="utf-8", errors="replace") if vtts else None
+                log.warning(
+                    "yt-dlp subtitle fetch failed (auto=%s): %s",
+                    auto,
+                    proc.stderr.strip()[:200],
+                )
+            vtts = sorted(
+                Path(tmp).glob("*.vtt"), key=lambda p: p.stat().st_size, reverse=True
+            )
+            return (
+                vtts[0].read_text(encoding="utf-8", errors="replace") if vtts else None
+            )
 
         # 1) human subtitles, 2) auto-captions.
         vtt = _grab(auto=False)
@@ -523,6 +574,8 @@ def new_metadata(**overrides: Any) -> dict[str, Any]:
     meta: dict[str, Any] = {
         "id": "",
         "title": "Untitled",
+        "user_title": None,
+        "user_notes": None,
         "source_url": None,
         "source_type": "url",
         "channel": None,
@@ -552,15 +605,15 @@ def _parse_upload_date(raw: Any) -> str | None:
     s = str(raw)
     if len(s) == 8 and s.isdigit():
         try:
-            return datetime.strptime(s, "%Y%m%d").replace(tzinfo=timezone.utc).isoformat()
+            return (
+                datetime.strptime(s, "%Y%m%d").replace(tzinfo=timezone.utc).isoformat()
+            )
         except ValueError:
             return None
     return s
 
 
-_ISO_DURATION_RE = re.compile(
-    r"^P(?:\d+D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$", re.I
-)
+_ISO_DURATION_RE = re.compile(r"^P(?:\d+D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$", re.I)
 
 
 def parse_duration_to_seconds(value: Any) -> int:
@@ -601,7 +654,11 @@ def parse_markitdown_youtube_header(md: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for line in md.splitlines()[:60]:
         line = line.strip()
-        if not out.get("title") and line.startswith("## ") and not line.startswith("### "):
+        if (
+            not out.get("title")
+            and line.startswith("## ")
+            and not line.startswith("### ")
+        ):
             candidate = line[3:].strip()
             if candidate and candidate.lower() != "youtube":
                 out["title"] = candidate
@@ -619,7 +676,11 @@ def parse_markitdown_youtube_header(md: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
-def ingest_youtube_video(url: str) -> str:
+def ingest_youtube_video(
+    url: str,
+    user_title: str | None = None,
+    user_notes: str | None = None,
+) -> str:
     """
     Convert a single YouTube video into transcript.md + metadata.json under
     library/youtube/<@channel>/videos/<slug>/. Returns the item path
@@ -658,8 +719,9 @@ def ingest_youtube_video(url: str) -> str:
             transcript_text = md
         transcript_source = "markitdown"
 
-    # 3. Merge metadata: yt-dlp first, markitdown header as fallback, url last.
-    title = info.get("title") or header.get("title") or url
+    # 3. Merge metadata: user_title overrides everything, else yt-dlp first,
+    #    markitdown header as fallback, url last.
+    title = user_title or info.get("title") or header.get("title") or url
 
     raw_handle = (
         info.get("uploader_id")
@@ -678,9 +740,12 @@ def ingest_youtube_video(url: str) -> str:
         "duration_seconds", 0
     )
 
-    # 4. Assemble the transcript document (title + description + transcript).
+    # 4. Assemble the transcript document (user notes + title + description + transcript).
     description = (info.get("description") or "").strip()
     doc_parts = [f"# {title}", ""]
+    if user_notes:
+        doc_parts += ["> " + line for line in user_notes.strip().split("\n")]
+        doc_parts += ["", "---", ""]
     if description:
         doc_parts += ["## Description", "", description, ""]
     doc_parts += ["## Transcript", ""]
@@ -690,7 +755,9 @@ def ingest_youtube_video(url: str) -> str:
         doc_parts.append("_No transcript or captions were available for this video._")
     if transcript_segments:
         doc_parts += ["", "---", "", "## Timestamped transcript", ""]
-        doc_parts.extend([f"[{seg['timestamp']}] {seg['text']}" for seg in transcript_segments])
+        doc_parts.extend(
+            [f"[{seg['timestamp']}] {seg['text']}" for seg in transcript_segments]
+        )
     document = "\n".join(doc_parts).strip() + "\n"
 
     # 5. Determine collision-safe destination.
@@ -703,16 +770,25 @@ def ingest_youtube_video(url: str) -> str:
     atomic_write_text(item_dir / "transcript.md", document)
     if transcript_segments:
         atomic_write_json(item_dir / "segments.json", transcript_segments)
-    log.info("transcript for %s via %s (%d words)", slug, transcript_source, _word_count(transcript_text))
+    log.info(
+        "transcript for %s via %s (%d words)",
+        slug,
+        transcript_source,
+        _word_count(transcript_text),
+    )
 
     # 6. Build + persist metadata.
     meta = new_metadata(
         id=slug,
         title=title,
+        user_title=user_title,
+        user_notes=user_notes,
         source_url=info.get("webpage_url") or url,
         source_type="youtube_video",
         channel=handle,
-        date_published=_parse_upload_date(info.get("upload_date") or info.get("release_date")),
+        date_published=_parse_upload_date(
+            info.get("upload_date") or info.get("release_date")
+        ),
         duration_seconds=duration_seconds,
         word_count=_word_count(transcript_text) or _word_count(document),
         thumbnail_url=info.get("thumbnail"),
@@ -733,8 +809,13 @@ def _update_channel_json(channel_root: Path, handle: str, info: dict[str, Any]) 
     existing = read_json(channel_root / "channel.json", default={}) or {}
     data = {
         "handle": handle,
-        "title": existing.get("title") or info.get("channel") or info.get("uploader") or handle,
-        "channel_url": existing.get("channel_url") or info.get("channel_url") or info.get("uploader_url"),
+        "title": existing.get("title")
+        or info.get("channel")
+        or info.get("uploader")
+        or handle,
+        "channel_url": existing.get("channel_url")
+        or info.get("channel_url")
+        or info.get("uploader_url"),
         "last_updated": now_iso(),
     }
     atomic_write_json(channel_root / "channel.json", data)
@@ -803,6 +884,8 @@ def ingest_file(
     original_name: str | None = None,
     source_url: str | None = None,
     keep_original: bool = False,
+    user_title: str | None = None,
+    user_notes: str | None = None,
 ) -> str:
     """
     Convert an uploaded file (or arbitrary URL) into content.md + metadata.json
@@ -818,7 +901,7 @@ def ingest_file(
 
     source = source_url or filepath
     name = original_name or Path(filepath).name or source
-    title = Path(name).stem if not source_url else name
+    title = user_title or (Path(name).stem if not source_url else name)
 
     docs_dir().mkdir(parents=True, exist_ok=True)
     slug = unique_slug(title, docs_dir())
@@ -840,8 +923,7 @@ def ingest_file(
     if source_type == "image" and not source_url:
         exif_md = run_markitdown(source)
         ocr_text = run_tesseract_ocr(source)
-        content = (
-            f"# {title}\n\n"
+        body = (
             "## OCR text\n\n"
             f"{ocr_text.strip()}\n\n"
             "---\n\n"
@@ -849,7 +931,14 @@ def ingest_file(
             f"{exif_md.strip()}\n"
         )
     else:
-        content = run_markitdown(source)
+        body = run_markitdown(source)
+
+    doc_parts = [f"# {title}", ""]
+    if user_notes:
+        doc_parts += ["> " + line for line in user_notes.strip().split("\n")]
+        doc_parts += ["", "---", ""]
+    doc_parts += [body.strip(), ""]
+    content = "\n".join(doc_parts)
 
     atomic_write_text(item_dir / "content.md", content)
 
@@ -863,6 +952,8 @@ def ingest_file(
     meta = new_metadata(
         id=slug,
         title=title,
+        user_title=user_title,
+        user_notes=user_notes,
         source_url=source_url,
         source_type=source_type,
         word_count=_word_count(content),
@@ -887,6 +978,7 @@ def save_note(
     content: str,
     tags: list[str] | None = None,
     source_url: str | None = None,
+    user_notes: str | None = None,
 ) -> str:
     """
     Save a hand-written / programmatically-supplied Markdown note as a
@@ -902,7 +994,13 @@ def save_note(
     slug = unique_slug(title, notes_dir())
     item_dir = notes_dir() / slug
     item_dir.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(item_dir / "content.md", content)
+
+    doc_parts = [content]
+    if user_notes:
+        doc_parts += ["", "---", "", "## Submission notes", ""]
+        doc_parts += ["> " + line for line in user_notes.strip().split("\n")]
+        doc_parts.append("")
+    atomic_write_text(item_dir / "content.md", "\n".join(doc_parts))
 
     clean_tags: list[str] = []
     seen: set[str] = set()
@@ -915,6 +1013,7 @@ def save_note(
     meta = new_metadata(
         id=slug,
         title=title,
+        user_notes=user_notes,
         source_url=source_url,
         source_type="note",
         tags=clean_tags,
@@ -1018,7 +1117,9 @@ def _prune_empty_parents(item_dir: Path) -> None:
             break
         if not entries:
             p.rmdir()
-        elif p.parent == youtube_dir() and all(e.name == "channel.json" for e in entries):
+        elif p.parent == youtube_dir() and all(
+            e.name == "channel.json" for e in entries
+        ):
             shutil.rmtree(p)  # channel with no remaining videos
         else:
             break
@@ -1114,7 +1215,12 @@ def list_trash() -> list[dict[str, Any]]:
 
 def _safe_trash_child(trash_name: str) -> Path:
     """Resolve a direct child of _trash, refusing traversal."""
-    if not trash_name or "/" in trash_name or "\\" in trash_name or trash_name.startswith("."):
+    if (
+        not trash_name
+        or "/" in trash_name
+        or "\\" in trash_name
+        or trash_name.startswith(".")
+    ):
         raise ValueError("Invalid trash name")
     target = (trash_dir() / trash_name).resolve()
     if target.parent != trash_dir().resolve() or not target.is_dir():
@@ -1170,7 +1276,14 @@ def purge_expired_retained_originals() -> int:
         source_dir = item_dir / "_source"
         if not source_dir.is_dir():
             continue
-        latest_mtime = max((child.stat().st_mtime for child in source_dir.rglob('*') if child.exists()), default=source_dir.stat().st_mtime)
+        latest_mtime = max(
+            (
+                child.stat().st_mtime
+                for child in source_dir.rglob("*")
+                if child.exists()
+            ),
+            default=source_dir.stat().st_mtime,
+        )
         if latest_mtime >= cutoff:
             continue
         shutil.rmtree(source_dir)
@@ -1219,7 +1332,11 @@ def purge_expired_trash(days: int = 30) -> int:
         man = read_json(child / TRASH_MANIFEST, default={}) or {}
         deleted_at = man.get("deleted_at")
         try:
-            ts = datetime.fromisoformat(deleted_at).timestamp() if deleted_at else child.stat().st_mtime
+            ts = (
+                datetime.fromisoformat(deleted_at).timestamp()
+                if deleted_at
+                else child.stat().st_mtime
+            )
         except (ValueError, TypeError):
             ts = child.stat().st_mtime
         if ts < cutoff:
