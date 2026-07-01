@@ -395,28 +395,36 @@ def api_search(q: str = "") -> JSONResponse:
         return JSONResponse({"query": q, "results": results})
 
     root = ingest.library_path()
-    for meta_path in ingest.iter_metadata_files():
-        meta = ingest.read_json(meta_path)
+    index = ingest.get_index()
+
+    for meta in index.get("items", []):
         if not isinstance(meta, dict):
             continue
-        meta = {**ingest.new_metadata(), **meta}
-        item_dir = meta_path.parent
-        meta["path"] = item_dir.relative_to(root).as_posix()
 
         haystack = " ".join(
             str(meta.get(k) or "") for k in ("title", "channel", "source_url")
         ).lower()
-        haystack += " " + " ".join(meta.get("tags") or []).lower()
+        haystack += " " + " ".join(str(t) for t in (meta.get("tags") or [])).lower()
 
-        body = _read_content_md(item_dir).lower()
-        snippet = ""
         in_meta = q in haystack
-        idx = body.find(q)
-        if idx >= 0:
-            start = max(0, idx - 60)
-            snippet = ("…" if start else "") + body[start : idx + 120].replace(
-                "\n", " "
-            )
+        snippet = ""
+        idx = -1
+
+        if not in_meta:
+            item_dir = (root / meta["path"]) if meta.get("path") else None
+            if item_dir and item_dir.is_dir():
+                for name in ("content.md", "transcript.md"):
+                    f = item_dir / name
+                    if f.exists():
+                        body = f.read_text(encoding="utf-8").lower()
+                        idx = body.find(q)
+                        if idx >= 0:
+                            start = max(0, idx - 60)
+                            snippet = (
+                                ("…" if start else "")
+                                + body[start : idx + 120].replace("\n", " ")
+                            )
+                        break
 
         if in_meta or idx >= 0:
             results.append({**meta, "snippet": snippet})

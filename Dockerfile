@@ -1,25 +1,22 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    MARKBASE_LIBRARY_PATH=/data/library \
-    MARKBASE_STATE_PATH=/data/state \
-    MARKBASE_HOST=0.0.0.0 \
-    MARKBASE_PORT=8733
-
-WORKDIR /app
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg git \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir yt-dlp "markitdown[all]"
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY app.py ingest.py queue_worker.py ./
+COPY static/ ./static/
 
-EXPOSE 8733
+ENV MARKBASE_LIBRARY_PATH=/data/library
+ENV MARKBASE_STATE_PATH=/data/state
+ENV MARKBASE_HOST=0.0.0.0
+ENV MARKBASE_PORT=8000
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8733"]
+EXPOSE 8000
+
+CMD ["sh", "-c", "uvicorn app:app --host $MARKBASE_HOST --port $MARKBASE_PORT"]
