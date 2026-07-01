@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+import httpx
 from PIL import Image, ImageOps
 
 log = logging.getLogger("markbase.ingest")
@@ -308,6 +309,27 @@ def run_markitdown(source: str) -> str:
     if not proc.stdout.strip():
         raise RuntimeError("markitdown produced no output")
     return proc.stdout
+
+
+def _prefetch_url_for_markitdown(source_url: str) -> str:
+    headers = {
+        "User-Agent": (
+            "MarkBase/1.0 (personal knowledge tool; "
+            "+https://github.com/tweakyourpc/markbase)"
+        )
+    }
+    with httpx.Client(timeout=20.0, follow_redirects=True, headers=headers) as client:
+        response = client.get(source_url)
+        response.raise_for_status()
+
+    fd, tmp_path = tempfile.mkstemp(suffix=".html")
+    try:
+        with os.fdopen(fd, "wb") as tmp:
+            tmp.write(response.content)
+    except Exception:
+        os.unlink(tmp_path)
+        raise
+    return tmp_path
 
 
 def _image_extensions() -> set[str]:
@@ -931,7 +953,17 @@ def ingest_file(
             f"{exif_md.strip()}\n"
         )
     else:
-        body = run_markitdown(source)
+        if source_url and urlparse(source_url).scheme in {"http", "https"}:
+            try:
+                body = run_markitdown(source)
+            except RuntimeError:
+                tmp_path = _prefetch_url_for_markitdown(source_url)
+                try:
+                    body = run_markitdown(tmp_path)
+                finally:
+                    Path(tmp_path).unlink(missing_ok=True)
+        else:
+            body = run_markitdown(source)
 
     doc_parts = [f"# {title}", ""]
     if user_notes:
