@@ -20,6 +20,7 @@ import signal
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import unicodedata
@@ -370,9 +371,16 @@ def _terminate_process(proc: subprocess.Popen[str]) -> None:
         proc.wait(timeout=3)
 
 
+def _tool_command(name: str) -> str:
+    sibling = Path(sys.executable).resolve().parent / name
+    if sibling.is_file():
+        return str(sibling)
+    return shutil.which(name) or name
+
+
 def run_markitdown(source: str) -> str:
     """Run `markitdown <source>` and return the Markdown on stdout."""
-    proc = _run(["markitdown", source])
+    proc = _run([_tool_command("markitdown"), source])
     if proc.returncode != 0:
         raise RuntimeError(
             f"markitdown failed (exit {proc.returncode}): {proc.stderr.strip() or proc.stdout.strip()}"
@@ -438,7 +446,7 @@ def run_tesseract_ocr(source: str) -> str:
 
 def ytdlp_json(url: str, extra: Iterable[str] = ()) -> str:
     """Run yt-dlp dumping JSON; return raw stdout."""
-    cmd = ["yt-dlp", "--no-warnings", "--no-playlist", "--skip-download", *extra, url]
+    cmd = [_tool_command("yt-dlp"), "--no-warnings", "--no-playlist", "--skip-download", *extra, url]
     proc = _run(cmd)
     if proc.returncode != 0:
         raise RuntimeError(
@@ -448,7 +456,7 @@ def ytdlp_json(url: str, extra: Iterable[str] = ()) -> str:
 
 
 def _ytdlp_available() -> bool:
-    return shutil.which("yt-dlp") is not None
+    return _tool_command("yt-dlp") != "yt-dlp"
 
 
 # --------------------------------------------------------------------------- #
@@ -605,7 +613,7 @@ def fetch_transcript_via_ytdlp(url: str) -> tuple[str, list[dict[str, Any]]] | N
             flag = "--write-auto-subs" if auto else "--write-subs"
             proc = _run(
                 [
-                    "yt-dlp",
+                    _tool_command("yt-dlp"),
                     "--no-warnings",
                     "--no-playlist",
                     "--skip-download",

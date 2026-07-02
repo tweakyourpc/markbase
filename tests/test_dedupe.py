@@ -61,6 +61,17 @@ class DedupeTests(unittest.TestCase):
             "https://www.youtube.com/watch?v=abc123",
         )
 
+    def test_tool_command_prefers_virtualenv_sibling(self):
+        venv_bin = self.library / "venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        python = venv_bin / "python"
+        tool = venv_bin / "markitdown"
+        python.touch()
+        tool.touch()
+
+        with mock.patch.object(ingest.sys, "executable", str(python)):
+            self.assertEqual(ingest._tool_command("markitdown"), str(tool))
+
     def test_ingest_file_returns_existing_item_for_duplicate_source_url(self):
         rel = self._write_item("docs/existing", "https://example.com/docs/page?utm_source=newsletter")
 
