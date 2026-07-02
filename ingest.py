@@ -661,6 +661,14 @@ def _looks_like_failed_markitdown(md: str) -> bool:
     low = md.lower()
     if "no element found" in low and "attempt" in low:
         return True
+    transcript_api_failure = (
+        "could not retrieve a transcript for the video" in low
+        or "youtube-transcript-api/issues" in low
+    )
+    if "attempt 1 failed" in low and transcript_api_failure:
+        return True
+    if "request to youtube failed: 429" in low and transcript_api_failure:
+        return True
     # Just the YouTube chrome/footer, no real content.
     if "© " in md and "nfl sunday ticket" in low and len(md) < 1500:
         return True

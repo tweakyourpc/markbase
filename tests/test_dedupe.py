@@ -129,6 +129,25 @@ class DedupeTests(unittest.TestCase):
         self.assertEqual(jobs[0]["result_path"], rel)
 
 
+class MarkitdownFailureTests(unittest.TestCase):
+    def test_detects_youtube_transcript_api_rate_limit_output(self):
+        output = """Attempt 1 failed: Could not retrieve a transcript for the video
+Request to YouTube failed: 429 Client Error: Too Many Requests
+https://github.com/jdepoix/youtube-transcript-api/issues
+Attempt 2 failed: Could not retrieve a transcript for the video
+About Press Copyright Contact us NFL Sunday Ticket
+"""
+
+        self.assertTrue(ingest._looks_like_failed_markitdown(output))
+
+    def test_does_not_reject_normal_transcript_text(self):
+        self.assertFalse(
+            ingest._looks_like_failed_markitdown(
+                "# A video\n\n## Transcript\n\nThis is ordinary transcript text."
+            )
+        )
+
+
 class TranscriptVttTests(unittest.TestCase):
     def test_vtt_parser_collapses_rolling_youtube_caption_overlap(self):
         vtt = """WEBVTT
