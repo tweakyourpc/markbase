@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import os
+import signal
 import re
 import shutil
 import subprocess
@@ -31,6 +32,8 @@ import httpx
 from PIL import Image, ImageOps
 
 log = logging.getLogger("markbase.ingest")
+_CANCEL_CHECKER_LOCK = threading.Lock()
+_CANCEL_CHECKER = None
 
 # --------------------------------------------------------------------------- #
 # Paths / configuration
@@ -75,6 +78,10 @@ def state_path() -> Path:
     """
     p = os.environ.get("MARKBASE_STATE_PATH")
     return Path(p).expanduser().resolve() if p else library_path()
+
+
+class JobCancelledError(RuntimeError):
+    """Raised when an active ingest job is cancelled."""
 
 
 # Top-level directory names that hold content (everything else, e.g. names
@@ -214,6 +221,23 @@ def unique_slug(base: str, parent: Path) -> str:
 _YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
 
 
+def infer_channel_handle(value: str | None) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("@") and " " not in raw:
+        return raw
+    match = re.search(r"youtube\.com/@([\w.-]+)", raw, re.I)
+    if match:
+        return f"@{match.group(1)}"
+    return None
+
+
+def channel_batch_key(value: str | None) -> str | None:
+    handle = infer_channel_handle(value)
+    return f"channel:{handle.lower()}" if handle else None
+
+
 def normalize_source_url(url: str | None) -> str:
     """
     Canonical form used for source de-duplication.
@@ -290,13 +314,60 @@ def find_existing_by_source_url(source_url: str | None) -> str | None:
 
 def _run(cmd: list[str], timeout: int = 600) -> subprocess.CompletedProcess:
     log.info("exec: %s", " ".join(cmd))
-    return subprocess.run(
+    proc = subprocess.Popen(
         cmd,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=timeout,
-        check=False,
+        start_new_session=True,
     )
+    try:
+        deadline = None if timeout <= 0 else (datetime.now(timezone.utc).timestamp() + timeout)
+        while True:
+            if _is_cancel_requested():
+                _terminate_process(proc)
+                raise JobCancelledError("job cancelled")
+            try:
+                stdout, stderr = proc.communicate(timeout=0.5)
+                return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+            except subprocess.TimeoutExpired:
+                if deadline is not None and datetime.now(timezone.utc).timestamp() >= deadline:
+                    _terminate_process(proc)
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+    finally:
+        if proc.stdout:
+            proc.stdout.close()
+        if proc.stderr:
+            proc.stderr.close()
+
+
+def set_cancel_checker(checker) -> None:
+    global _CANCEL_CHECKER
+    with _CANCEL_CHECKER_LOCK:
+        _CANCEL_CHECKER = checker
+
+
+def _is_cancel_requested() -> bool:
+    with _CANCEL_CHECKER_LOCK:
+        checker = _CANCEL_CHECKER
+    return bool(checker and checker())
+
+
+def _terminate_process(proc: subprocess.Popen[str]) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except OSError:
+        proc.terminate()
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            proc.kill()
+        proc.wait(timeout=3)
 
 
 def run_markitdown(source: str) -> str:
@@ -864,7 +935,7 @@ def ingest_youtube_channel(url_or_handle: str) -> list[str]:
     raw = ytdlp_json(target, extra=["--flat-playlist", "--dump-json"])
 
     urls: list[str] = []
-    handle = None
+    handle = infer_channel_handle(url_or_handle)
     for line in raw.splitlines():
         line = line.strip()
         if not line:
@@ -885,12 +956,15 @@ def ingest_youtube_channel(url_or_handle: str) -> list[str]:
     if handle:
         h = handle if str(handle).startswith("@") else f"@{slugify(str(handle))}"
         _update_channel_json(youtube_dir() / h, h, {})
+        batch_key = channel_batch_key(h)
+    else:
+        batch_key = channel_batch_key(target)
 
     # Lazy import to avoid an import cycle with the queue worker.
     from queue_worker import add_job
 
     for u in urls:
-        add_job("youtube_video", u)
+        add_job("youtube_video", u, batch_key=batch_key)
 
     log.info("channel %s fanned out into %d video jobs", url_or_handle, len(urls))
     return urls
@@ -1205,6 +1279,20 @@ def delete_item(item_dir: Path, permanent: bool = False) -> dict[str, Any]:
     update_index()
     log.info("trashed %s -> %s", rel, dest.name)
     return {"deleted": rel, "permanent": False, "trash": dest.name}
+
+
+def delete_channel(handle: str, permanent: bool = True) -> dict[str, Any]:
+    normalized = handle if handle.startswith("@") else f"@{handle}"
+    target = youtube_dir() / normalized
+    if not target.is_dir():
+        raise ValueError(f"Channel not found: {normalized}")
+    rel = target.relative_to(library_path()).as_posix()
+    if permanent:
+        shutil.rmtree(target)
+        update_index()
+        log.info("permanently deleted channel %s", rel)
+        return {"deleted": rel, "permanent": True}
+    return delete_item(target, permanent=False)
 
 
 def _trash_original_path(child: Path) -> str:

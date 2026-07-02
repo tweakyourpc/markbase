@@ -227,6 +227,8 @@
   .job-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .job .label { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .job .err { color: var(--red); font-size: 11px; margin-top: 4px; word-break: break-word; }
+  .job-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  .job-actions .mini-btn { padding: 4px 8px; font-size: 11px; }
 
   .meta-table { width: 100%; font-size: 12px; }
   .meta-table td { padding: 4px 0; vertical-align: top; }
@@ -339,6 +341,12 @@
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px">
       <h3 style="margin:0">Job Queue</h3>
       <button class="mini-btn" id="clear-completed-btn" onclick="clearCompletedJobs()">Clear finished</button>
+    </div>
+    <div class="field" style="margin-bottom:12px">
+      <input id="purge-channel-handle" type="text" placeholder="@channel to purge…" autocomplete="off" />
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button class="mini-btn del" style="flex:1" onclick="purgeChannelFromInput()">Purge channel</button>
     </div>
     <div class="queue-list" id="queue-list"><div style="color:var(--text-dim);font-size:12px">No jobs yet.</div></div>
   </div>
@@ -946,19 +954,77 @@ async function pollQueue() {
 }
 function renderQueue(jobs) {
   const list = $("#queue-list");
-  const visibleJobs = jobs.filter(j => j.status !== "done" && j.status !== "failed");
-  $("#clear-completed-btn").disabled = !jobs.some(j => j.status === "done" || j.status === "failed");
+  const visibleJobs = jobs.filter(j => !["done", "failed", "cancelled"].includes(j.status));
+  $("#clear-completed-btn").disabled = !jobs.some(j => ["done", "failed", "cancelled"].includes(j.status));
   if (!visibleJobs.length) { list.innerHTML = `<div style="color:var(--text-dim);font-size:12px">No active or queued jobs.</div>`; return; }
   list.innerHTML = visibleJobs.slice(0, 15).map(j => {
     const label = j.original_name || j.payload || j.type;
+    const isProcessing = j.status === "processing";
+    const canDelete = j.status !== "processing";
+    const canPurge = !!j.result_path;
     return `<div class="job">
       <div class="job-top">
-        <span class="label" title="${esc(label)}">${esc(j.type.replace("_"," "))}: ${esc(trim(label,38))}</span>
+        <span class="label" title="${esc(label)}">#${esc(j.id)} ${esc(j.type.replace("_"," "))}: ${esc(trim(label,30))}</span>
         <span class="badge ${esc(j.status)}">${esc(j.status)}</span>
       </div>
+      ${j.batch_key ? `<div style="color:var(--text-dim);font-size:11px;margin-top:4px">${esc(j.batch_key)}</div>` : ""}
       ${j.error_message ? `<div class="err">${esc(j.error_message)}</div>` : ""}
+      <div class="job-actions">
+        <button class="mini-btn" onclick="cancelJob(${j.id})" ${j.status === "cancelled" ? "disabled" : ""}>Cancel</button>
+        <button class="mini-btn del" onclick="deleteJob(${j.id})" ${canDelete ? "" : "disabled"}>Delete</button>
+        <button class="mini-btn" onclick="purgeJobOutput(${j.id})" ${canPurge ? "" : "disabled"}>Purge output</button>
+      </div>
     </div>`;
   }).join("");
+}
+
+async function cancelJob(jobId) {
+  try {
+    const r = await fetch(`/api/queue/${jobId}/cancel`, { method: "POST" });
+    if (!r.ok) throw new Error(await r.text());
+    pollQueue();
+  } catch (e) {
+    alert("Cancel failed: " + e.message);
+  }
+}
+
+async function deleteJob(jobId) {
+  if (!confirm("Delete this job record?")) return;
+  try {
+    const r = await fetch(`/api/queue/${jobId}`, { method: "DELETE" });
+    if (!r.ok) throw new Error(await r.text());
+    pollQueue();
+  } catch (e) {
+    alert("Delete failed: " + e.message);
+  }
+}
+
+async function purgeJobOutput(jobId) {
+  if (!confirm("Permanently delete files created by this job?")) return;
+  try {
+    const r = await fetch(`/api/queue/${jobId}/purge-output`, { method: "POST" });
+    if (!r.ok) throw new Error(await r.text());
+    await loadLibrary();
+    pollQueue();
+  } catch (e) {
+    alert("Purge failed: " + e.message);
+  }
+}
+
+async function purgeChannelFromInput() {
+  const raw = $("#purge-channel-handle").value.trim();
+  if (!raw) return;
+  const handle = raw.startsWith("@") ? raw : `@${raw}`;
+  if (!confirm(`Permanently delete ${handle} from the library and remove its queued jobs?`)) return;
+  try {
+    const r = await fetch(`/api/channel/${encodeURIComponent(handle)}/purge`, { method: "POST" });
+    if (!r.ok) throw new Error(await r.text());
+    $("#purge-channel-handle").value = "";
+    await loadLibrary();
+    pollQueue();
+  } catch (e) {
+    alert("Channel purge failed: " + e.message);
+  }
 }
 
 async function clearCompletedJobs() {

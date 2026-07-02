@@ -82,6 +82,29 @@ class DedupeTests(unittest.TestCase):
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0]["status"], "queued")
 
+    def test_channel_jobs_share_batch_key_and_cancel_cascades(self):
+        channel_job = queue_worker.add_job("youtube_channel", "@ExampleChannel")
+        video_job = queue_worker.add_job(
+            "youtube_video",
+            "https://www.youtube.com/watch?v=abc123",
+            batch_key="channel:@examplechannel",
+        )
+
+        queue_worker.cancel_job(channel_job)
+
+        jobs = {job["id"]: job for job in queue_worker.get_jobs(limit=10)}
+        self.assertEqual(jobs[channel_job]["status"], "cancelled")
+        self.assertEqual(jobs[video_job]["status"], "cancelled")
+
+    def test_purge_job_output_deletes_ingested_item(self):
+        rel = self._write_item("docs/existing", "https://example.com/docs/page")
+        job_id = queue_worker.add_job("url", "https://example.com/docs/page")
+
+        result = queue_worker.purge_job_output(job_id)
+
+        self.assertTrue(result["purged"])
+        self.assertFalse((self.library / rel).exists())
+
     def test_queue_records_duplicate_existing_source_as_done(self):
         rel = self._write_item("docs/existing", "https://example.com/docs/page")
 

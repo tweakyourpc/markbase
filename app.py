@@ -290,11 +290,13 @@ async def api_ingest(
             "youtube_channel": "youtube_channel",
             "url": "url",
         }[stype]
+        batch_key = ingest.channel_batch_key(url.strip()) if job_type == "youtube_channel" else None
         job_id = queue_worker.add_job(
             job_type,
             url.strip(),
             user_title=user_title,
             user_notes=user_notes,
+            batch_key=batch_key,
         )
         return JSONResponse({"job_id": job_id, "type": job_type, "url": url.strip()})
 
@@ -309,6 +311,49 @@ def api_queue() -> JSONResponse:
 @app.post("/api/queue/clear-completed")
 def api_queue_clear_completed() -> JSONResponse:
     return JSONResponse({"cleared": queue_worker.clear_finished_jobs()})
+
+
+@app.post("/api/queue/{job_id}/cancel")
+def api_queue_cancel_job(job_id: int) -> JSONResponse:
+    try:
+        return JSONResponse(queue_worker.cancel_job(job_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.delete("/api/queue/{job_id}")
+def api_queue_delete_job(job_id: int) -> JSONResponse:
+    try:
+        return JSONResponse(queue_worker.delete_job(job_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/queue/{job_id}/purge-output")
+def api_queue_purge_output(job_id: int) -> JSONResponse:
+    try:
+        return JSONResponse(queue_worker.purge_job_output(job_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/channel/{handle}/purge")
+def api_channel_purge(handle: str) -> JSONResponse:
+    normalized = unquote(handle)
+    if not normalized.startswith("@"):
+        normalized = "@" + normalized
+    try:
+        deleted = ingest.delete_channel(normalized, permanent=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    batch_key = ingest.channel_batch_key(normalized)
+    purged_jobs = queue_worker.delete_jobs_for_batch_key(batch_key) if batch_key else 0
+    return JSONResponse({
+        "channel": normalized,
+        "deleted": deleted,
+        "purged_jobs": purged_jobs,
+    })
 
 
 @app.post("/api/maintenance/restart")
