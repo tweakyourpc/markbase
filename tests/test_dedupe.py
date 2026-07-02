@@ -64,9 +64,11 @@ class DedupeTests(unittest.TestCase):
     def test_tool_command_prefers_virtualenv_sibling(self):
         venv_bin = self.library / "venv" / "bin"
         venv_bin.mkdir(parents=True)
+        real_python = self.library / "python"
+        real_python.touch()
         python = venv_bin / "python"
+        python.symlink_to(real_python)
         tool = venv_bin / "markitdown"
-        python.touch()
         tool.touch()
 
         with mock.patch.object(ingest.sys, "executable", str(python)):

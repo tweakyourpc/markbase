@@ -372,7 +372,7 @@ def _terminate_process(proc: subprocess.Popen[str]) -> None:
 
 
 def _tool_command(name: str) -> str:
-    sibling = Path(sys.executable).resolve().parent / name
+    sibling = Path(sys.executable).parent / name
     if sibling.is_file():
         return str(sibling)
     return shutil.which(name) or name
