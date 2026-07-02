@@ -438,7 +438,7 @@ def run_tesseract_ocr(source: str) -> str:
 
 def ytdlp_json(url: str, extra: Iterable[str] = ()) -> str:
     """Run yt-dlp dumping JSON; return raw stdout."""
-    cmd = ["yt-dlp", "--no-warnings", "--skip-download", *extra, url]
+    cmd = ["yt-dlp", "--no-warnings", "--no-playlist", "--skip-download", *extra, url]
     proc = _run(cmd)
     if proc.returncode != 0:
         raise RuntimeError(
@@ -607,6 +607,7 @@ def fetch_transcript_via_ytdlp(url: str) -> tuple[str, list[dict[str, Any]]] | N
                 [
                     "yt-dlp",
                     "--no-warnings",
+                    "--no-playlist",
                     "--skip-download",
                     flag,
                     "--sub-langs",

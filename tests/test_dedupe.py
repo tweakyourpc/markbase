@@ -57,7 +57,7 @@ class DedupeTests(unittest.TestCase):
             "https://www.youtube.com/watch?v=abc123",
         )
         self.assertEqual(
-            ingest.normalize_source_url("https://www.youtube.com/watch?v=abc123&utm_source=x"),
+            ingest.normalize_source_url("https://www.youtube.com/watch?v=abc123&list=playlist&utm_source=x"),
             "https://www.youtube.com/watch?v=abc123",
         )
 

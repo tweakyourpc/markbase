@@ -144,6 +144,7 @@
   .badge.processing { background: rgba(96,165,250,.15); color: var(--blue); }
   .badge.done { background: rgba(74,222,128,.15); color: var(--green); }
   .badge.failed { background: rgba(248,113,113,.18); color: var(--red); }
+  .badge.cancelled { background: var(--bg-elev2); color: var(--text-dim); }
   .badge.none { background: var(--bg-elev2); color: var(--text-dim); }
 
   /* ---------------- Reader ---------------- */
@@ -954,14 +955,13 @@ async function pollQueue() {
 }
 function renderQueue(jobs) {
   const list = $("#queue-list");
-  const visibleJobs = jobs.filter(j => !["done", "failed", "cancelled"].includes(j.status));
   $("#clear-completed-btn").disabled = !jobs.some(j => ["done", "failed", "cancelled"].includes(j.status));
-  if (!visibleJobs.length) { list.innerHTML = `<div style="color:var(--text-dim);font-size:12px">No active or queued jobs.</div>`; return; }
-  list.innerHTML = visibleJobs.slice(0, 15).map(j => {
+  if (!jobs.length) { list.innerHTML = `<div style="color:var(--text-dim);font-size:12px">No jobs yet.</div>`; return; }
+  list.innerHTML = jobs.slice(0, 15).map(j => {
     const label = j.original_name || j.payload || j.type;
-    const isProcessing = j.status === "processing";
     const canDelete = j.status !== "processing";
     const canPurge = !!j.result_path;
+    const canCancel = ["queued", "processing"].includes(j.status);
     return `<div class="job">
       <div class="job-top">
         <span class="label" title="${esc(label)}">#${esc(j.id)} ${esc(j.type.replace("_"," "))}: ${esc(trim(label,30))}</span>
@@ -970,7 +970,7 @@ function renderQueue(jobs) {
       ${j.batch_key ? `<div style="color:var(--text-dim);font-size:11px;margin-top:4px">${esc(j.batch_key)}</div>` : ""}
       ${j.error_message ? `<div class="err">${esc(j.error_message)}</div>` : ""}
       <div class="job-actions">
-        <button class="mini-btn" onclick="cancelJob(${j.id})" ${j.status === "cancelled" ? "disabled" : ""}>Cancel</button>
+        <button class="mini-btn" onclick="cancelJob(${j.id})" ${canCancel ? "" : "disabled"}>Cancel</button>
         <button class="mini-btn del" onclick="deleteJob(${j.id})" ${canDelete ? "" : "disabled"}>Delete</button>
         <button class="mini-btn" onclick="purgeJobOutput(${j.id})" ${canPurge ? "" : "disabled"}>Purge output</button>
       </div>

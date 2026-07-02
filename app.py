@@ -290,15 +290,18 @@ async def api_ingest(
             "youtube_channel": "youtube_channel",
             "url": "url",
         }[stype]
-        batch_key = ingest.channel_batch_key(url.strip()) if job_type == "youtube_channel" else None
+        payload = url.strip()
+        if job_type == "youtube_video":
+            payload = ingest.normalize_source_url(payload)
+        batch_key = ingest.channel_batch_key(payload) if job_type == "youtube_channel" else None
         job_id = queue_worker.add_job(
             job_type,
-            url.strip(),
+            payload,
             user_title=user_title,
             user_notes=user_notes,
             batch_key=batch_key,
         )
-        return JSONResponse({"job_id": job_id, "type": job_type, "url": url.strip()})
+        return JSONResponse({"job_id": job_id, "type": job_type, "url": payload})
 
     raise HTTPException(status_code=400, detail="Provide a 'url' or a 'file'.")
 
