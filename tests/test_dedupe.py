@@ -1,4 +1,5 @@
 import importlib
+import json
 import os
 import tempfile
 import unittest
@@ -117,6 +118,45 @@ class DedupeTests(unittest.TestCase):
 
         self.assertTrue(result["purged"])
         self.assertFalse((self.library / rel).exists())
+
+    def test_youtube_rate_limit_falls_back_to_local_whisper(self):
+        url = "https://www.youtube.com/watch?v=local123"
+        metadata = json.dumps(
+            {
+                "title": "Local fallback",
+                "uploader_id": "",
+                "webpage_url": url,
+            }
+        )
+        local_result = (
+            "This transcript was generated locally.",
+            [
+                {
+                    "start": 0.0,
+                    "end": 2.0,
+                    "timestamp": "00:00",
+                    "text": "This transcript was generated locally.",
+                }
+            ],
+        )
+        rate_limit = (
+            "Attempt 1 failed: Could not retrieve a transcript for the video "
+            "Request to YouTube failed: 429"
+        )
+
+        with (
+            mock.patch.object(ingest, "ytdlp_json", return_value=metadata),
+            mock.patch.object(ingest, "fetch_transcript_via_ytdlp", return_value=None),
+            mock.patch.object(ingest, "run_markitdown", return_value=rate_limit),
+            mock.patch.object(
+                ingest, "transcribe_youtube_audio", return_value=local_result
+            ) as local_transcribe,
+        ):
+            result = ingest.ingest_youtube_video(url)
+
+        local_transcribe.assert_called_once_with(url)
+        transcript = (self.library / result / "transcript.md").read_text()
+        self.assertIn("This transcript was generated locally.", transcript)
 
     def test_queue_records_duplicate_existing_source_as_done(self):
         rel = self._write_item("docs/existing", "https://example.com/docs/page")

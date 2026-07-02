@@ -35,6 +35,8 @@ from PIL import Image, ImageOps
 log = logging.getLogger("markbase.ingest")
 _CANCEL_CHECKER_LOCK = threading.Lock()
 _CANCEL_CHECKER = None
+_WHISPER_MODEL_LOCK = threading.Lock()
+_WHISPER_MODELS: dict[str, Any] = {}
 
 # --------------------------------------------------------------------------- #
 # Paths / configuration
@@ -656,6 +658,82 @@ def fetch_transcript_via_ytdlp(url: str) -> tuple[str, list[dict[str, Any]]] | N
     return text, segments
 
 
+def _get_whisper_model(model_name: str):
+    with _WHISPER_MODEL_LOCK:
+        model = _WHISPER_MODELS.get(model_name)
+        if model is None:
+            from faster_whisper import WhisperModel
+
+            model = WhisperModel(model_name, device="cpu", compute_type="int8")
+            _WHISPER_MODELS[model_name] = model
+        return model
+
+
+def transcribe_youtube_audio(
+    url: str,
+) -> tuple[str, list[dict[str, Any]]] | None:
+    """Download YouTube audio and transcribe it locally with Faster-Whisper."""
+    model_name = os.environ.get("MARKBASE_WHISPER_MODEL", "base.en").strip() or "base.en"
+    with tempfile.TemporaryDirectory(prefix="mb-whisper-") as tmp:
+        output_template = str(Path(tmp) / "audio.%(ext)s")
+        proc = _run(
+            [
+                _tool_command("yt-dlp"),
+                "--no-warnings",
+                "--no-playlist",
+                "-f",
+                "bestaudio/best",
+                "--extract-audio",
+                "--audio-format",
+                "wav",
+                "-o",
+                output_template,
+                url,
+            ],
+            timeout=1800,
+        )
+        if proc.returncode != 0:
+            log.warning(
+                "yt-dlp audio download failed: %s",
+                proc.stderr.strip()[:500],
+            )
+            return None
+
+        audio_path = Path(tmp) / "audio.wav"
+        if not audio_path.is_file():
+            log.warning("yt-dlp produced no WAV audio for %s", url)
+            return None
+
+        model = _get_whisper_model(model_name)
+        generated, _ = model.transcribe(
+            str(audio_path),
+            language="en" if model_name.endswith(".en") else None,
+            beam_size=5,
+            vad_filter=True,
+        )
+        segments: list[dict[str, Any]] = []
+        for segment in generated:
+            if _is_cancel_requested():
+                raise JobCancelledError("job cancelled")
+            text = str(segment.text or "").strip()
+            if not text:
+                continue
+            start = float(segment.start)
+            end = float(segment.end)
+            segments.append(
+                {
+                    "start": start,
+                    "end": end,
+                    "timestamp": _format_timestamp(start),
+                    "text": text,
+                }
+            )
+
+    if not segments:
+        return None
+    return _segments_to_text(segments), segments
+
+
 def _looks_like_failed_markitdown(md: str) -> bool:
     """Detect markitdown's YouTube failure output (empty-XML retries + footer)."""
     low = md.lower()
@@ -812,7 +890,7 @@ def ingest_youtube_video(
         log.warning("yt-dlp metadata fetch failed for %s: %s", url, exc)
 
     # 2. Get the transcript. Prefer yt-dlp captions (reliable); fall back to
-    #    markitdown only if captions are unavailable.
+    #    MarkItDown, then local Whisper if remote captions are unavailable.
     header: dict[str, Any] = {}
     transcript_segments: list[dict[str, Any]] = []
     transcript_result = fetch_transcript_via_ytdlp(url)
@@ -820,14 +898,32 @@ def ingest_youtube_video(
     if transcript_result:
         transcript_text, transcript_segments = transcript_result
     else:
-        md = run_markitdown(url)
-        if _looks_like_failed_markitdown(md):
-            log.warning("markitdown returned no usable transcript for %s", url)
-            transcript_text = ""
-        else:
+        md = ""
+        try:
+            md = run_markitdown(url)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("markitdown transcript fallback failed for %s: %s", url, exc)
+
+        if md and not _looks_like_failed_markitdown(md):
             header = parse_markitdown_youtube_header(md)
             transcript_text = md
-        transcript_source = "markitdown"
+            transcript_source = "markitdown"
+        else:
+            if md:
+                log.warning("markitdown returned no usable transcript for %s", url)
+            try:
+                local_result = transcribe_youtube_audio(url)
+            except JobCancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                log.warning("local Whisper transcription failed for %s: %s", url, exc)
+                local_result = None
+            if local_result:
+                transcript_text, transcript_segments = local_result
+                transcript_source = "local whisper"
+            else:
+                transcript_text = ""
+                transcript_source = "unavailable"
 
     # 3. Merge metadata: user_title overrides everything, else yt-dlp first,
     #    markitdown header as fallback, url last.
