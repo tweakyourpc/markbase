@@ -682,7 +682,10 @@ def transcribe_youtube_audio(
                 "--no-warnings",
                 "--no-playlist",
                 "-f",
-                "bestaudio/best",
+                os.environ.get(
+                    "MARKBASE_YOUTUBE_AUDIO_FORMAT",
+                    "18/best[acodec!=none]/bestaudio/best",
+                ),
                 "--extract-audio",
                 "--audio-format",
                 "wav",
